@@ -1,0 +1,19 @@
+{
+	"name": "ashleigh-hopkins/rest-model",
+	"description": "",
+	"authors": [
+		{
+			"name": "Ashleigh Hopkins",
+			"email": "a.hopkins@sureflap.co.uk"
+		}
+	],
+	"autoload": {
+		"psr-4": {
+			"Rest\\": "src/Rest/"
+		}
+	},
+	"require": {
+        "guzzlehttp/guzzle": "^6.0",
+		"nesbot/carbon": "~1.20"
+	}
+}
