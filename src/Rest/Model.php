@@ -84,6 +84,17 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return $model;
     }
 
+    public static function hydrate(array $items, $connection = null)
+    {
+        $instance = (new static)->setConnection($connection);
+
+        $items = array_map(function ($item) use ($instance) {
+            return $instance->newFromClient($item);
+        }, $items);
+
+        return $instance->newCollection($items);
+    }
+
     public static function create(array $attributes = [])
     {
         $model = new static($attributes);
@@ -113,7 +124,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
      * @param $id
      * @return static
      */
-    public function find($id)
+    public static function find($id)
     {
         $instance = new static;
 
@@ -297,7 +308,14 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
     {
         $conn = $this->getConnection();
 
-        return new Client($conn, $this->getEndpoint());
+        if($this->connection === null)
+        {
+            $this->connection = \Config::get('rest.default');
+        }
+
+        $client = new Client($conn, $this->getEndpoint(), \Config::get("rest.connections.{$this->connection}"));
+
+        return $client->setModel($this);
     }
 
     public function newCollection(array $models = [])
@@ -876,7 +894,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
 
         if(isset(static::$cachedClients[$connection]) == false)
         {
-            $config = \Config::get("rest.connections.$connection");
+            $config = \Config::get("rest.connections.$connection.client");
 
             if ($config !== null)
             {

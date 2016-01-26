@@ -1,6 +1,8 @@
 <?php namespace Rest;
 
-class Collection
+use Illuminate\Support\Collection as BaseCollection;
+
+class Collection extends BaseCollection
 {
 
 }
