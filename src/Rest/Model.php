@@ -23,6 +23,8 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
 
     protected $relations = [];
 
+    protected $autoRelations = [];
+
     protected $dates = [];
 
     protected $dateFormat;
@@ -76,6 +78,37 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
     public function newFromClient($attributes = [], $connection = null)
     {
         $model = $this->newInstance([], true);
+
+        if($this->autoRelations)
+        {
+            foreach ($this->autoRelations as $relationName)
+            {
+                $relation = $model->$relationName();
+
+                if($item = data_get($attributes, $relation->field))
+                {
+                    $class = $relation->related;
+
+                    if($relation->type == 'many')
+                    {
+                        $model->relations[$relationName] = $item = $class::hydrate($item);
+                    }
+                    else if ($relation->type == 'one')
+                    {
+                        $model->relations[$relationName] = $item = $class::hydrate([$item])->first();
+                    }
+                }
+
+                if(is_object($attributes))
+                {
+                    unset($attributes->{$relation->field});
+                }
+                else if (is_array($attributes))
+                {
+                    unset($attributes[$relation->field]);
+                }
+            }
+        }
 
         $model->setRawAttributes((array) $attributes, true);
 
@@ -313,7 +346,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
             $this->connection = \Config::get('rest.default');
         }
 
-        $client = new Client($conn, $this->getEndpoint(), \Config::get("rest.connections.{$this->connection}"));
+        $client = new Client($conn, $this->getEndpoint(), static::getConnectionConfig($this->connection));
 
         return $client->setModel($this);
     }
@@ -329,7 +362,14 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
             return $this->endpoint;
         }
 
-        return str_replace('\\', '', Str::snake(Str::plural(class_basename($this))));
+        $baseName = class_basename($this);
+
+        if(static::getConnectionConfig($this->connection, 'endpoint_plural'))
+        {
+            $baseName = Str::plural($baseName);
+        }
+
+        return $this->endpoint = str_replace('\\', '', Str::snake($baseName));
     }
 
     public function getKey()
@@ -894,7 +934,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
 
         if(isset(static::$cachedClients[$connection]) == false)
         {
-            $config = \Config::get("rest.connections.$connection.client");
+            $config = static::getConnectionConfig($connection, 'client');
 
             if ($config !== null)
             {
@@ -905,6 +945,13 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         }
 
         return static::$cachedClients[$connection];
+    }
+
+    protected static function getConnectionConfig($connection = null, $dot = '')
+    {
+        $dot = $dot ? ".$dot" : '';
+
+        return \Config::get("rest.connections.{$connection}{$dot}");
     }
 
     public function __get($key)
@@ -958,5 +1005,23 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         $instance = new static;
 
         return call_user_func_array([$instance, $method], $parameters);
+    }
+
+    protected function hasMany($related, $field)
+    {
+        return (object)[
+            'related' => $related,
+            'field' => $field,
+            'type' => 'many',
+        ];
+    }
+
+    protected function hasOne($related, $field)
+    {
+        return (object)[
+            'related' => $related,
+            'field' => $field,
+            'type' => 'one',
+        ];
     }
 }
