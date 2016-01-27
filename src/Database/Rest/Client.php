@@ -153,28 +153,48 @@ class Client
 
         $endpoint = str_replace_template($this->endpoint, $id) . "/{$objectId}";
 
+        $hash = sha1($this->connection->getConfig('base_uri') . "_{$endpoint}_{$this->endpoint}");
+
+        if($existing = \Cache::get($hash))
+        {
+            if($etag = data_get($existing, 'etag'))
+            {
+                $this->header('If-None-Match', $etag);
+            }
+        }
+
         $ref = $this->getNextReference();
 
         $this->startLog($ref, $endpoint, 'index');
 
         return $this->pending['show'][$ref] = $this->connection->getAsync($endpoint, ['query' => $this->getQuery(), 'headers' => $this->getHeaders()])
-            ->then(function($result) use($ref)
+            ->then(function($clientResult) use($ref, $existing, $hash)
             {
-                $this->endLog($ref, $result);
+                $this->endLog($ref, $clientResult);
 
                 unset($this->pending['show'][$ref]);
 
-                $rawResult = $result->getBody()->getContents();
+                $connection = $this->model->getConnectionName();
+
+                if($clientResult->getStatusCode() == 304)
+                {
+                    return $this->model->hydrate([$existing['object']], $connection, $this->eagerLoad)->first();
+                }
+
+                $rawResult = $clientResult->getBody()->getContents();
 
                 $jsonResult = json_decode($rawResult);
 
                 if($jsonResult !== false)
                 {
-                    $connection = $this->model->getConnectionName();
-
                     $dataVariable = $this->getDataVariable('show');
 
-                    return $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
+                    $result = $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
+
+                    if($etag = $clientResult->getHeader('ETag'))
+                    {
+                        \Cache::put($hash, ['etag' => $etag[0], 'object' => $result->toArray()], 60);
+                    }
                 }
 
                 return null;
@@ -381,7 +401,7 @@ class Client
      */
     private function getQuery()
     {
-        return $this->connection->getConfig('query') ?: [] + $this->query;
+        return ($this->connection->getConfig('query') ?: []) + $this->query;
     }
 
     /**
@@ -389,7 +409,7 @@ class Client
      */
     private function getHeaders()
     {
-        return $this->connection->getConfig('headers') ?: [] + $this->headers;
+        return ($this->connection->getConfig('headers') ?: []) + $this->headers;
     }
 
     /**
