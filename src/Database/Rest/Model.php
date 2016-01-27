@@ -1,4 +1,4 @@
-<?php namespace Rest;
+<?php namespace Database\Rest;
 
 use ArrayAccess;
 use Carbon\Carbon;

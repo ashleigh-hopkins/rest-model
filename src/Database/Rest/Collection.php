@@ -1,4 +1,4 @@
-<?php namespace Rest;
+<?php namespace Database\Rest;
 
 use Illuminate\Support\Collection as BaseCollection;
 

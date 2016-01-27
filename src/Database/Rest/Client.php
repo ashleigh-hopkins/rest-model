@@ -1,4 +1,4 @@
-<?php namespace Rest;
+<?php namespace Database\Rest;
 
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 
@@ -228,6 +228,14 @@ class Client
     private function getQuery()
     {
         return $this->connection->getConfig('query') ?: [] + $this->query;
+    }
+
+    /**
+     * @return Model
+     */
+    public function getModel()
+    {
+        return $this->model;
     }
 
     /**

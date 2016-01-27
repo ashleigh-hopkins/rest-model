@@ -9,7 +9,7 @@
 	],
 	"autoload": {
 		"psr-4": {
-			"Rest\\": "src/Rest/"
+			"Database\\": "src/Database/"
 		}
 	},
 	"require": {
