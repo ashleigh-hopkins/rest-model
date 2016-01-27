@@ -16,6 +16,8 @@ class Client
 
     protected $query = [];
 
+    protected $headers = [];
+
     /**
      * @var Model
      */
@@ -49,7 +51,7 @@ class Client
 
         $this->startLog($ref, $endpoint, 'index');
 
-        return $this->pending['destroy'][$ref] = $this->connection->deleteAsync($endpoint, ['query' => $this->getQuery()])
+        return $this->pending['destroy'][$ref] = $this->connection->deleteAsync($endpoint, ['query' => $this->getQuery(), 'headers' => $this->getHeaders()])
             ->then(
                 function($result) use($ref)
                 {
@@ -82,7 +84,7 @@ class Client
 
         $this->startLog($ref, $endpoint, 'head');
 
-        return $this->pending['head'][$ref] = $this->connection->headAsync($endpoint, ['query' => $this->getQuery()])
+        return $this->pending['head'][$ref] = $this->connection->headAsync($endpoint, ['query' => $this->getQuery(), 'headers' => $this->getHeaders()])
             ->then(function($result) use ($ref)
             {
                 $this->endLog($ref, $result);
@@ -112,7 +114,7 @@ class Client
 
         $this->startLog($ref, $endpoint, 'index');
 
-        return $this->pending['index'][$ref] = $this->connection->getAsync($endpoint, ['query' => $this->getQuery()])
+        return $this->pending['index'][$ref] = $this->connection->getAsync($endpoint, ['query' => $this->getQuery(), 'headers' => $this->getHeaders()])
             ->then(function ($result) use ($ref)
             {
                 $this->endLog($ref, $result);
@@ -155,7 +157,7 @@ class Client
 
         $this->startLog($ref, $endpoint, 'index');
 
-        return $this->pending['show'][$ref] = $this->connection->getAsync($endpoint, ['query' => $this->getQuery()])
+        return $this->pending['show'][$ref] = $this->connection->getAsync($endpoint, ['query' => $this->getQuery(), 'headers' => $this->getHeaders()])
             ->then(function($result) use($ref)
             {
                 $this->endLog($ref, $result);
@@ -198,7 +200,7 @@ class Client
 
         $this->startLog($ref, $endpoint, 'index', $data);
 
-        return $this->pending['store'][$ref] = $this->connection->postAsync($endpoint, ['json' => $data, 'query' => $this->getQuery()])
+        return $this->pending['store'][$ref] = $this->connection->postAsync($endpoint, ['json' => $data, 'query' => $this->getQuery(), 'headers' => $this->getHeaders()])
             ->then(function($result) use ($ref, $returnResult)
             {
                 $this->endLog($ref, $result);
@@ -243,7 +245,7 @@ class Client
 
         $this->startLog($ref, $endpoint, 'index', $data);
 
-        return $this->pending['update'][$ref] = $this->connection->put($endpoint, ['json' => $data, 'query' => $this->getQuery()])
+        return $this->pending['update'][$ref] = $this->connection->put($endpoint, ['json' => $data, 'query' => $this->getQuery(), 'headers' => $this->getHeaders()])
             ->then (function ($result) use ($ref, $returnResult)
             {
                 $this->endLog($ref, $result);
@@ -286,6 +288,21 @@ class Client
         foreach($key as $k => $v)
         {
             $this->query[$k] = $v;
+        }
+
+        return $this;
+    }
+
+    public function header($key, $value = null)
+    {
+        if(is_array($key) == false)
+        {
+            $key = [$key => $value];
+        }
+
+        foreach($key as $k => $v)
+        {
+            $this->headers[$k] = $v;
         }
 
         return $this;
@@ -368,6 +385,14 @@ class Client
     }
 
     /**
+     * @return array
+     */
+    private function getHeaders()
+    {
+        return $this->connection->getConfig('headers') ?: [] + $this->headers;
+    }
+
+    /**
      * @return Model
      */
     public function getModel()
@@ -408,13 +433,14 @@ class Client
      */
     protected function startLog($ref, $endpoint, $method, $body = null)
     {
-        static::$log[$ref] = [
+        static::$log[$ref] = array_filter([
             'method' => $method,
             'url' => $this->connection->getConfig('base_uri') . "$endpoint",
             'query' => $this->getQuery(),
+            'headers' => $this->getHeaders(),
             'body' => is_array($body) ? json_encode($body) : $body,
             'time' => microtime(true),
-        ];
+        ]);
     }
 
     protected function endLog($ref, $response = null)
