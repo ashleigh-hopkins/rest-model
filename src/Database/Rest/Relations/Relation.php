@@ -11,7 +11,7 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
     /**
      * The Eloquent query builder instance.
      *
-     * @var \Illuminate\Database\Eloquent\Builder
+     * @var Client
      */
     protected $client;
 

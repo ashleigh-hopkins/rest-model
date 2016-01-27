@@ -10,6 +10,8 @@ class BelongsTo extends Relation
 
     protected $foreignKey;
 
+    protected $modelIds = [];
+
     public function __construct($client, $parent, $foreignKey, $otherKey, $relation)
     {
         $this->otherKey = $otherKey;
@@ -38,7 +40,19 @@ class BelongsTo extends Relation
      */
     public function addEagerConstraints(array $models)
     {
-        // TODO: Implement addEagerConstraints() method.
+        $ids = [];
+
+        foreach ($models as $model)
+        {
+            $attribute = $model->getAttribute($this->foreignKey);
+
+            if($attribute !== null)
+            {
+                $ids[] = $attribute;
+            }
+        }
+
+        $this->client->query("filter[{$this->otherKey}]", $ids);
     }
 
     /**
@@ -64,9 +78,7 @@ class BelongsTo extends Relation
      */
     public function getEager()
     {
-        $attribute = $this->parent->getAttribute($this->foreignKey);
-
-        return new Collection($attribute ? [$this->related->find($attribute)] : []);
+        return new Collection($this->client->index());
     }
 
     /**
