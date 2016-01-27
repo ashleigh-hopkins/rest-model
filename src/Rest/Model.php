@@ -41,6 +41,8 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
 
     public $incrementing = true;
 
+    protected $with = [];
+
     protected static $cachedClients;
 
     public static $snakeAttributes = true;
@@ -75,13 +77,19 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return $model;
     }
 
-    public function newFromClient($attributes = [], $connection = null)
+    /**
+     * @param array $attributes
+     * @param string|null $connection
+     * @param array $autoRelations
+     * @return static
+     */
+    public function newFromClient($attributes = [], $connection = null, $autoRelations = [])
     {
-        $model = $this->newInstance([], true);
+        $model = $this->newInstance([], true)->setAutoRelations($autoRelations);
 
-        if($this->autoRelations)
+        if($model->autoRelations)
         {
-            foreach ($this->autoRelations as $relationName)
+            foreach ($model->autoRelations as $relationName)
             {
                 $relation = $model->$relationName();
 
@@ -117,12 +125,23 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return $model;
     }
 
-    public static function hydrate(array $items, $connection = null)
+    /**
+     * @param $items
+     * @param null $connection
+     * @param array $autoRelations
+     * @return Collection
+     */
+    public static function hydrate($items, $connection = null, $autoRelations = [])
     {
         $instance = (new static)->setConnection($connection);
 
-        $items = array_map(function ($item) use ($instance) {
-            return $instance->newFromClient($item);
+        if($items == null)
+        {
+            return $instance->newCollection([]);
+        }
+
+        $items = array_map(function ($item) use ($instance, $autoRelations) {
+            return $instance->newFromClient($item, null, $autoRelations);
         }, $items);
 
         return $instance->newCollection($items);
@@ -137,11 +156,11 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return $model;
     }
 
-    public static function all()
+    public static function all($id = [])
     {
         $instance = new static;
 
-        return $instance->newClient()->index();
+        return $instance->newClient()->index($id);
     }
 
     public static function findOrNew($id)
@@ -151,31 +170,6 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         }
 
         return new static;
-    }
-
-    /**
-     * @param $id
-     * @return static
-     */
-    public static function find($id)
-    {
-        $instance = new static;
-
-        return $instance->newClient()->show($id);
-    }
-
-    /**
-     * @param $id
-     * @return static
-     */
-    public function findOrFail($id)
-    {
-        if($model = $this->find($id))
-        {
-            return $model;
-        }
-
-        throw (new ModelNotFoundException())->setModel(get_class($this));
     }
 
     /**
@@ -221,6 +215,22 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return $count;
     }
 
+    public static function with($relations)
+    {
+        $relations = is_array($relations) ? $relations : func_get_args();
+
+        $instance = new static;
+
+        return $instance->newClient()->with($relations);
+    }
+
+    public function setAutoRelations($relations)
+    {
+        $this->autoRelations = array_merge($this->autoRelations, $relations);
+
+        return $this;
+    }
+
     public function delete()
     {
         if (is_null($this->getKeyName())) {
@@ -251,7 +261,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
 
     public function save()
     {
-        $client = null;
+        $client = $this->newClient();
 
         // If the model already exists in the database we can just update our record
         // that is already in this database using the current IDs in this "where"
@@ -284,7 +294,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         $dirty = $this->getDirty();
 
         if (count($dirty) > 0) {
-            $client->update($this->getKey(), $dirty);
+            return $client->update($this->getKey(), $dirty);
         }
 
         return true;
@@ -297,16 +307,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         // table from the database. Not all tables have to be incrementing though.
         $attributes = $this->attributes;
 
-        if ($this->incrementing) {
-            $this->insertAndSetId($client, $attributes);
-        }
-
-        // If the table isn't incrementing we'll simply insert these attributes as they
-        // are. These attribute arrays must contain an "id" column previously placed
-        // there by the developer as the manually determined key for these models.
-        else {
-            $client->store($this->getKeyForStore(), $attributes);
-        }
+        $this->insertAndUpdateFromRemote($client, $attributes);
 
         // We will go ahead and set the exists property to true, so that it is set when
         // the created event is fired, just in case the developer tries to update it
@@ -318,20 +319,14 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return true;
     }
 
-    protected function insertAndSetId(Client $client, $attributes)
+    protected function insertAndUpdateFromRemote(Client $client, $attributes)
     {
-        $keyName = $this->getKeyName();
+        $key = $this->getKeyForStore();
 
         // we only care about the last id
+        $object = $client->store($key, $attributes, true);
 
-        if(is_array($keyName))
-        {
-            $keyName = array_pop($keyName);
-        }
-
-        $object = $client->store($attributes);
-
-        $this->setAttribute($keyName, data_get($object, $keyName));
+        $this->fill($object->toArray());
     }
 
     /**
@@ -339,16 +334,16 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
      */
     public function newClient()
     {
-        $conn = $this->getConnection();
-
         if($this->connection === null)
         {
             $this->connection = \Config::get('rest.default');
         }
 
+        $conn = $this->getConnection();
+
         $client = new Client($conn, $this->getEndpoint(), static::getConnectionConfig($this->connection));
 
-        return $client->setModel($this);
+        return $client->setModel($this)->with($this->with);
     }
 
     public function newCollection(array $models = [])
@@ -369,7 +364,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
             $baseName = Str::plural($baseName);
         }
 
-        return $this->endpoint = str_replace('\\', '', Str::snake($baseName));
+        return $this->endpoint = str_replace('\\', '', str_rest_url($baseName));
     }
 
     public function getKey()
@@ -998,6 +993,13 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
     public function __toString()
     {
         return $this->toJson();
+    }
+
+    public function __call($method, $parameters)
+    {
+        $client = $this->newClient();
+
+        return call_user_func_array([$client, $method], $parameters);
     }
 
     public static function __callStatic($method, $parameters)

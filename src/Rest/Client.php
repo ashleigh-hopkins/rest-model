@@ -1,5 +1,7 @@
 <?php namespace Rest;
 
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+
 class Client
 {
     protected $config;
@@ -14,6 +16,8 @@ class Client
      * @var Model
      */
     protected $model;
+
+    protected $eagerLoad = [];
 
     public function __construct(\GuzzleHttp\Client $connection, $endpoint, $config)
     {
@@ -64,7 +68,7 @@ class Client
 
             $dataVariable = $this->getDataVariable('index');
 
-            return $this->model->hydrate($dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult, $connection);
+            return $this->model->hydrate($dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult, $connection, $this->eagerLoad);
         }
 
         return null;
@@ -80,7 +84,9 @@ class Client
 
         $clientResult = $this->connection->get("$endpoint/{$objectId}", ['query' => $this->getQuery()]);
 
-        $jsonResult = json_decode($clientResult->getBody()->getContents());
+        $rawResult = $clientResult->getBody()->getContents();
+
+        $jsonResult = json_decode($rawResult);
 
         if($jsonResult !== false)
         {
@@ -88,13 +94,13 @@ class Client
 
             $dataVariable = $this->getDataVariable('show');
 
-            return $this->model->newFromClient($dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult)->setConnection($connection);
+            return $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
         }
 
         return null;
     }
 
-    public function store($id = null, $data)
+    public function store($id = null, $data = [], $returnResult = false)
     {
         $id = (array)$id;
 
@@ -106,15 +112,22 @@ class Client
 
         if($jsonResult !== false)
         {
+            if($returnResult == false)
+            {
+                return in_array($clientResult->getStatusCode(), [200, 304]);
+            }
+
+            $connection = $this->model->getConnectionName();
+
             $dataVariable = $this->getDataVariable('store');
 
-            return $dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult;
+            return $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
         }
 
         return null;
     }
 
-    public function update($id, $data)
+    public function update($id, $data = [], $returnResult = false)
     {
         $id = (array)$id;
 
@@ -128,12 +141,19 @@ class Client
 
         if($jsonResult !== false)
         {
+            if($returnResult == false)
+            {
+                return in_array($clientResult->getStatusCode(), [200, 304]);
+            }
+
+            $connection = $this->model->getConnectionName();
+
             $dataVariable = $this->getDataVariable('update');
 
-            return $dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult;
+            return $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
         }
 
-        return null;
+        return false;
     }
 
     public function query($key, $value = null)
@@ -149,6 +169,34 @@ class Client
         }
 
         return $this;
+    }
+
+    public function with($relations)
+    {
+        $this->query('with', $relations);
+
+        $this->eagerLoad = array_merge($this->eagerLoad, $relations);
+
+        return $this;
+    }
+
+    public function find($id)
+    {
+        return $this->show($id);
+    }
+
+    /**
+     * @param $id
+     * @return static
+     */
+    public function findOrFail($id)
+    {
+        if($model = $this->find($id))
+        {
+            return $model;
+        }
+
+        throw (new ModelNotFoundException())->setModel(get_class($this->model));
     }
 
     private function getDataVariable($method)
@@ -189,6 +237,15 @@ class Client
     public function setModel($model)
     {
         $this->model = $model;
+
+        return $this;
+    }
+
+    public function __call($method, $parameters)
+    {
+        if (method_exists($this->model, $method)) {
+            return call_user_func_array([$this->model, $method], $parameters);
+        }
 
         return $this;
     }
