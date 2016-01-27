@@ -2,6 +2,8 @@
 
 use Database\Rest\Client;
 use Database\Rest\Model;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Arr;
 
 abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
@@ -40,7 +42,7 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
      * @param Client $client
      * @param Model $parent
      */
-    public function __construct(Client $client, Model $parent)
+    public function __construct($client, $parent)
     {
         $this->client = $client;
         $this->parent = $parent;
@@ -54,7 +56,9 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
      */
     public function getEager()
     {
-        return $this->get();
+        $key = $this->related->getKeyForStore();
+
+        return new Collection($this->client->index($key));
     }
 
     /**
@@ -85,7 +89,7 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
      * @param  $parent
      * @return null
      */
-    public function getRelationCountQuery(Client $query, Client $parent)
+    public function getRelationCountQuery(Builder $_ = null, Builder $__ = null, Client $query = null, Client $parent = null)
     {
         //return $this->getRelationQuery($query, $parent, new Expression('count(*)'));
     }
