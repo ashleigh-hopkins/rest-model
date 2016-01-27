@@ -1,5 +1,6 @@
 <?php namespace Database\Rest;
 
+use GuzzleHttp\Promise\Promise;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 class Client
@@ -155,11 +156,28 @@ class Client
 
         $hash = sha1($this->connection->getConfig('base_uri') . "_{$endpoint}_{$this->endpoint}");
 
-        if($existing = \Cache::get($hash))
+        $existing = null;
+
+        if(array_get($this->config, 'cache.enabled'))
         {
-            if($etag = data_get($existing, 'etag'))
+            if ($existing = \Cache::get($hash))
             {
-                $this->header('If-None-Match', $etag);
+                if(array_get($this->config, 'cache.check_304'))
+                {
+                    if ($etag = data_get($existing, 'etag'))
+                    {
+                        $this->header('If-None-Match', $etag);
+                    }
+                }
+                else
+                {
+                    $promise = new Promise();
+
+                    $connection = $this->model->getConnectionName();
+                    $promise->resolve($this->model->hydrate([$existing['object']], $connection, $this->eagerLoad)->first());
+
+                    return $promise;
+                }
             }
         }
 
@@ -191,9 +209,12 @@ class Client
 
                     $result = $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
 
-                    if($etag = $clientResult->getHeader('ETag'))
+                    if(array_get($this->config, 'cache.enabled'))
                     {
-                        \Cache::put($hash, ['etag' => $etag[0], 'object' => $result->toArray()], 60);
+                        if ($etag = $clientResult->getHeader('ETag'))
+                        {
+                            \Cache::put($hash, ['etag' => $etag[0], 'object' => $result->toArray()], array_get($this->config, 'cache.lifetime', 1));
+                        }
                     }
                 }
 
