@@ -173,9 +173,26 @@ class Client
 
     public function with($relations)
     {
-        $this->query('with', $relations);
+        if($relations)
+        {
+            $nonClosureRelations = [];
 
-        $this->eagerLoad = array_merge($this->eagerLoad, $relations);
+            foreach ($relations as $k => $relation)
+            {
+                if ($relation instanceof \Closure)
+                {
+                    $nonClosureRelations[] = $k;
+                }
+                else
+                {
+                    $nonClosureRelations[] = $relation;
+                }
+            }
+
+            $this->query('with', $nonClosureRelations);
+
+            $this->eagerLoad = array_merge($this->eagerLoad, $nonClosureRelations);
+        }
 
         return $this;
     }

@@ -89,8 +89,13 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
 
         if($model->autoRelations)
         {
-            foreach ($model->autoRelations as $relationName)
+            foreach ($model->autoRelations as $k => $relationName)
             {
+                if($relationName instanceof \Closure)
+                {
+                    $relationName = $k;
+                }
+
                 $relation = $model->$relationName();
 
                 if($item = data_get($attributes, $relation->field))

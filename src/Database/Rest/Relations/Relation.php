@@ -114,9 +114,19 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
     /**
      * Get the underlying query for the relation.
      *
-     * @return \Illuminate\Database\Eloquent\Builder
+     * @return Client
      */
     public function getClient()
+    {
+        return $this->client;
+    }
+
+    /**
+     * Get the underlying query for the relation.
+     *
+     * @return Client
+     */
+    public function getQuery()
     {
         return $this->client;
     }
