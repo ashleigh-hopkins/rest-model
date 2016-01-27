@@ -4,6 +4,10 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 class Client
 {
+    protected static $log = [];
+
+    protected static $requestReference = 0;
+
     protected $config;
 
     protected $connection;
@@ -19,22 +23,13 @@ class Client
 
     protected $eagerLoad = [];
 
-    protected $pending = [
-        'ref' => 0
-    ];
+    protected $pending = [];
 
     public function __construct(\GuzzleHttp\Client $connection, $endpoint, $config)
     {
         $this->config = $config;
         $this->connection = $connection;
         $this->endpoint = $endpoint;
-    }
-
-    protected function onClientFailure($result, $type, $ref)
-    {
-        unset($this->pending[$type][$ref]);
-
-        return null;
     }
 
     public function destroy($id)
@@ -48,14 +43,18 @@ class Client
 
         $objectId = array_pop($id);
 
-        $endpoint = str_replace_template($this->endpoint, $id);
+        $endpoint = str_replace_template($this->endpoint, $id) . "/{$objectId}";
 
-        $ref = $this->pending['ref']++;
+        $ref = $this->getNextReference();
 
-        return $this->pending['destroy'][$ref] = $this->connection->deleteAsync("$endpoint/{$objectId}", ['query' => $this->getQuery()])
+        $this->startLog($ref, $endpoint, 'index');
+
+        return $this->pending['destroy'][$ref] = $this->connection->deleteAsync($endpoint, ['query' => $this->getQuery()])
             ->then(
                 function($result) use($ref)
                 {
+                    $this->endLog($ref, $result);
+
                     unset($this->pending['head'][$ref]);
 
                     return in_array($result->getStatusCode(), [200, 204]);
@@ -77,13 +76,17 @@ class Client
 
         $objectId = array_pop($id);
 
-        $endpoint = str_replace_template($this->endpoint, $id);
+        $endpoint = str_replace_template($this->endpoint, $id) . "/{$objectId}";
 
-        $ref = $this->pending['ref']++;
+        $ref = $this->getNextReference();
 
-        return $this->pending['head'][$ref] = $this->connection->headAsync("$endpoint/{$objectId}", ['query' => $this->getQuery()])
+        $this->startLog($ref, $endpoint, 'head');
+
+        return $this->pending['head'][$ref] = $this->connection->headAsync($endpoint, ['query' => $this->getQuery()])
             ->then(function($result) use ($ref)
             {
+                $this->endLog($ref, $result);
+
                 unset($this->pending['head'][$ref]);
 
                 return $result->getHeaders();
@@ -105,11 +108,15 @@ class Client
 
         $endpoint = str_replace_template($this->endpoint, $id);
 
-        $ref = $this->pending['ref']++;
+        $ref = $this->getNextReference();
+
+        $this->startLog($ref, $endpoint, 'index');
 
         return $this->pending['index'][$ref] = $this->connection->getAsync($endpoint, ['query' => $this->getQuery()])
             ->then(function ($result) use ($ref)
             {
+                $this->endLog($ref, $result);
+
                 unset($this->pending['index'][$ref]);
 
                 $jsonResult = json_decode($result->getBody()->getContents());
@@ -142,13 +149,17 @@ class Client
 
         $objectId = array_pop($id);
 
-        $endpoint = str_replace_template($this->endpoint, $id);
+        $endpoint = str_replace_template($this->endpoint, $id) . "/{$objectId}";
 
-        $ref = $this->pending['ref']++;
+        $ref = $this->getNextReference();
 
-        return $this->pending['show'][$ref] = $this->connection->getAsync("$endpoint/{$objectId}", ['query' => $this->getQuery()])
+        $this->startLog($ref, $endpoint, 'index');
+
+        return $this->pending['show'][$ref] = $this->connection->getAsync($endpoint, ['query' => $this->getQuery()])
             ->then(function($result) use($ref)
             {
+                $this->endLog($ref, $result);
+
                 unset($this->pending['show'][$ref]);
 
                 $rawResult = $result->getBody()->getContents();
@@ -183,11 +194,15 @@ class Client
 
         $endpoint = str_replace_template($this->endpoint, $id);
 
-        $ref = $this->pending['ref']++;
+        $ref = $this->getNextReference();
+
+        $this->startLog($ref, $endpoint, 'index', $data);
 
         return $this->pending['store'][$ref] = $this->connection->postAsync($endpoint, ['json' => $data, 'query' => $this->getQuery()])
             ->then(function($result) use ($ref, $returnResult)
             {
+                $this->endLog($ref, $result);
+
                 unset($this->pending['store'][$ref]);
 
                 if($returnResult == false)
@@ -222,13 +237,17 @@ class Client
 
         $objectId = array_pop($id);
 
-        $endpoint = str_replace_template($this->endpoint, $id);
+        $endpoint = str_replace_template($this->endpoint, $id) . "/{$objectId}";
 
-        $ref = $this->pending['ref']++;
+        $ref = $this->getNextReference();
 
-        return $this->pending['update'][$ref] = $this->connection->put("$endpoint/{$objectId}", ['json' => $data, 'query' => $this->getQuery()])
+        $this->startLog($ref, $endpoint, 'index', $data);
+
+        return $this->pending['update'][$ref] = $this->connection->put($endpoint, ['json' => $data, 'query' => $this->getQuery()])
             ->then (function ($result) use ($ref, $returnResult)
             {
+                $this->endLog($ref, $result);
+
                 unset($this->pending['update'][$ref]);
 
                 if($returnResult == false)
@@ -374,5 +393,50 @@ class Client
         }
 
         return $this;
+    }
+
+    public static function getRequestLog()
+    {
+        return static::$log;
+    }
+
+    /**
+     * @param $ref
+     * @param $endpoint
+     * @param string $method
+     * @param string|array|null $body
+     */
+    protected function startLog($ref, $endpoint, $method, $body = null)
+    {
+        static::$log[$ref] = [
+            'method' => $method,
+            'url' => $this->connection->getConfig('base_uri') . "$endpoint",
+            'query' => $this->getQuery(),
+            'body' => is_array($body) ? json_encode($body) : $body,
+            'time' => microtime(true),
+        ];
+    }
+
+    protected function endLog($ref, $response = null)
+    {
+        static::$log[$ref]['time'] = round((microtime(true) - static::$log[$ref]['time']) * 1000, 2);
+        static::$log[$ref]['status'] = $response->getStatusCode();
+    }
+
+    /**
+     * @return array
+     */
+    protected function getNextReference()
+    {
+        return static::$requestReference++;
+    }
+
+    protected function onClientFailure($result, $type, $ref)
+    {
+        $this->endLog($ref, $result->getResponse());
+
+        unset($this->pending[$type][$ref]);
+
+        return null;
     }
 }
