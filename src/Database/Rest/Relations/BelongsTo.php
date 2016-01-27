@@ -104,7 +104,12 @@ class BelongsTo extends Relation
 
             foreach ($this->pendingQueries as $query)
             {
-                $items[] = $query->wait(true);
+                $item = $query->wait(true);
+
+                if($item !== null)
+                {
+                    $items[] = $item;
+                }
             }
         }
 

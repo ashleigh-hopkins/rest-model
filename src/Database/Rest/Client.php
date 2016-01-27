@@ -30,6 +30,13 @@ class Client
         $this->endpoint = $endpoint;
     }
 
+    protected function onClientFailure($result, $type, $ref)
+    {
+        unset($this->pending[$type][$ref]);
+
+        return null;
+    }
+
     public function destroy($id)
     {
         return $this->destroyAsync($id)->wait(true);
@@ -46,12 +53,17 @@ class Client
         $ref = $this->pending['ref']++;
 
         return $this->pending['destroy'][$ref] = $this->connection->deleteAsync("$endpoint/{$objectId}", ['query' => $this->getQuery()])
-            ->then(function($result) use($ref)
-            {
-                unset($this->pending['head'][$ref]);
+            ->then(
+                function($result) use($ref)
+                {
+                    unset($this->pending['head'][$ref]);
 
-                return in_array($result->getStatusCode(), [200, 204]);
-            });
+                    return in_array($result->getStatusCode(), [200, 204]);
+                },
+                function ($result) use($ref)
+                {
+                    return $this->onClientFailure($result, 'destroy', $ref);
+                });
     }
 
     public function head($id)
@@ -75,6 +87,10 @@ class Client
                 unset($this->pending['head'][$ref]);
 
                 return $result->getHeaders();
+            },
+            function ($result) use($ref)
+            {
+                return $this->onClientFailure($result, 'head', $ref);
             });
     }
 
@@ -108,6 +124,10 @@ class Client
                 }
 
                 return null;
+            },
+            function ($result) use($ref)
+            {
+                return $this->onClientFailure($result, 'index', $ref);
             });
     }
 
@@ -145,6 +165,10 @@ class Client
                 }
 
                 return null;
+            },
+            function ($result) use($ref)
+            {
+                return $this->onClientFailure($result, 'show', $ref);
             });
     }
 
@@ -185,6 +209,10 @@ class Client
                 }
 
                 return null;
+            },
+            function ($result) use($ref)
+            {
+                return $this->onClientFailure($result, 'store', $ref);
             });
     }
 
@@ -222,6 +250,10 @@ class Client
                 }
 
                 return false;
+            },
+            function ($result) use($ref)
+            {
+                return $this->onClientFailure($result, 'update', $ref);
             });
     }
 
