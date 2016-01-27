@@ -1,5 +1,7 @@
 <?php namespace Database\Rest\Relations;
 
+use GuzzleHttp\Promise\Promise;
+use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Database\Eloquent\Collection;
 
 class BelongsTo extends Relation
@@ -10,7 +12,10 @@ class BelongsTo extends Relation
 
     protected $foreignKey;
 
-    protected $modelIds = [];
+    /**
+     * @var PromiseInterface[]
+     */
+    protected $pendingQueries = [];
 
     public function __construct($client, $parent, $foreignKey, $otherKey, $relation)
     {
@@ -52,7 +57,18 @@ class BelongsTo extends Relation
             }
         }
 
-        $this->client->query("filter[{$this->otherKey}]", $ids);
+        if($this->related->getClientHasFilter())
+        {
+            $this->client->query("filter[{$this->otherKey}]", $ids);
+            $this->pendingQueries[] = $this->client->indexAsync();
+        }
+        else
+        {
+            foreach ($ids as $id)
+            {
+                $this->pendingQueries[$id] = $this->client->showAsync($id);
+            }
+        }
     }
 
     /**
@@ -78,7 +94,21 @@ class BelongsTo extends Relation
      */
     public function getEager()
     {
-        return new Collection($this->client->index());
+        if($this->related->getClientHasFilter())
+        {
+            $items = $this->pendingQueries[0]->wait();
+        }
+        else
+        {
+            $items = [];
+
+            foreach ($this->pendingQueries as $query)
+            {
+                $items[] = $query->wait(true);
+            }
+        }
+
+        return new Collection($items);
     }
 
     /**

@@ -19,6 +19,10 @@ class Client
 
     protected $eagerLoad = [];
 
+    protected $pending = [
+        'ref' => 0
+    ];
+
     public function __construct(\GuzzleHttp\Client $connection, $endpoint, $config)
     {
         $this->config = $config;
@@ -28,106 +32,163 @@ class Client
 
     public function destroy($id)
     {
+        return $this->destroyAsync($id)->wait(true);
+    }
+
+    public function destroyAsync($id)
+    {
         $id = (array)$id;
 
         $objectId = array_pop($id);
 
         $endpoint = str_replace_template($this->endpoint, $id);
 
-        $result = $this->connection->delete("$endpoint/{$objectId}", ['query' => $this->getQuery()]);
+        $ref = $this->pending['ref']++;
 
-        return in_array($result->getStatusCode(), [200, 204]);
+        return $this->pending['destroy'][$ref] = $this->connection->deleteAsync("$endpoint/{$objectId}", ['query' => $this->getQuery()])
+            ->then(function($result) use($ref)
+            {
+                unset($this->pending['head'][$ref]);
+
+                return in_array($result->getStatusCode(), [200, 204]);
+            });
     }
 
     public function head($id)
     {
+        return $this->headAsync($id)->wait(true);
+    }
+
+    public function headAsync($id)
+    {
         $id = (array)$id;
 
         $objectId = array_pop($id);
 
         $endpoint = str_replace_template($this->endpoint, $id);
 
-        $clientResult = $this->connection->head("$endpoint/{$objectId}", ['query' => $this->getQuery()]);
+        $ref = $this->pending['ref']++;
 
-        return $clientResult->getHeaders();
+        return $this->pending['head'][$ref] = $this->connection->headAsync("$endpoint/{$objectId}", ['query' => $this->getQuery()])
+            ->then(function($result) use ($ref)
+            {
+                unset($this->pending['head'][$ref]);
+
+                return $result->getHeaders();
+            });
     }
 
     public function index($id = null)
     {
+        return $this->indexAsync($id)->wait(true);
+    }
+
+    public function indexAsync($id = null)
+    {
         $id = (array)$id;
 
         $endpoint = str_replace_template($this->endpoint, $id);
 
-        $clientResult = $this->connection->get($endpoint, ['query' => $this->getQuery()]);
+        $ref = $this->pending['ref']++;
 
-        $jsonResult = json_decode($clientResult->getBody()->getContents());
+        return $this->pending['index'][$ref] = $this->connection->getAsync($endpoint, ['query' => $this->getQuery()])
+            ->then(function ($result) use ($ref)
+            {
+                unset($this->pending['index'][$ref]);
 
-        if($jsonResult !== false)
-        {
-            $connection = $this->model->getConnectionName();
+                $jsonResult = json_decode($result->getBody()->getContents());
 
-            $dataVariable = $this->getDataVariable('index');
+                if($jsonResult !== false)
+                {
+                    $connection = $this->model->getConnectionName();
 
-            return $this->model->hydrate($dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult, $connection, $this->eagerLoad);
-        }
+                    $dataVariable = $this->getDataVariable('index');
 
-        return null;
+                    return $this->model->hydrate($dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult, $connection, $this->eagerLoad);
+                }
+
+                return null;
+            });
     }
 
     public function show($id)
     {
+        return $this->showAsync($id)->wait(true);
+    }
+
+    public function showAsync($id)
+    {
         $id = (array)$id;
 
         $objectId = array_pop($id);
 
         $endpoint = str_replace_template($this->endpoint, $id);
 
-        $clientResult = $this->connection->get("$endpoint/{$objectId}", ['query' => $this->getQuery()]);
+        $ref = $this->pending['ref']++;
 
-        $rawResult = $clientResult->getBody()->getContents();
+        return $this->pending['show'][$ref] = $this->connection->getAsync("$endpoint/{$objectId}", ['query' => $this->getQuery()])
+            ->then(function($result) use($ref)
+            {
+                unset($this->pending['show'][$ref]);
 
-        $jsonResult = json_decode($rawResult);
+                $rawResult = $result->getBody()->getContents();
 
-        if($jsonResult !== false)
-        {
-            $connection = $this->model->getConnectionName();
+                $jsonResult = json_decode($rawResult);
 
-            $dataVariable = $this->getDataVariable('show');
+                if($jsonResult !== false)
+                {
+                    $connection = $this->model->getConnectionName();
 
-            return $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
-        }
+                    $dataVariable = $this->getDataVariable('show');
 
-        return null;
+                    return $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
+                }
+
+                return null;
+            });
     }
 
     public function store($id = null, $data = [], $returnResult = false)
     {
+        return $this->storeAsync($id, $data, $returnResult)->wait(true);
+    }
+
+    public function storeAsync($id = null, $data = [], $returnResult = false)
+    {
         $id = (array)$id;
 
         $endpoint = str_replace_template($this->endpoint, $id);
 
-        $clientResult = $this->connection->post($endpoint, ['json' => $data, 'query' => $this->getQuery()]);
+        $ref = $this->pending['ref']++;
 
-        $jsonResult = json_decode($clientResult->getBody()->getContents());
-
-        if($jsonResult !== false)
-        {
-            if($returnResult == false)
+        return $this->pending['store'][$ref] = $this->connection->postAsync($endpoint, ['json' => $data, 'query' => $this->getQuery()])
+            ->then(function($result) use ($ref, $returnResult)
             {
-                return in_array($clientResult->getStatusCode(), [200, 304]);
-            }
+                unset($this->pending['store'][$ref]);
 
-            $connection = $this->model->getConnectionName();
+                if($returnResult == false)
+                {
+                    return in_array($result->getStatusCode(), [200, 304]);
+                }
 
-            $dataVariable = $this->getDataVariable('store');
+                $rawResult = $result->getBody()->getContents();
 
-            return $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
-        }
+                $jsonResult = json_decode($rawResult);
 
-        return null;
+                if($jsonResult !== false)
+                {
+                    $connection = $this->model->getConnectionName();
+
+                    $dataVariable = $this->getDataVariable('store');
+
+                    return $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
+                }
+
+                return null;
+            });
     }
 
-    public function update($id, $data = [], $returnResult = false)
+    public function updateAsync($id, $data = [], $returnResult = false)
     {
         $id = (array)$id;
 
@@ -135,25 +196,33 @@ class Client
 
         $endpoint = str_replace_template($this->endpoint, $id);
 
-        $clientResult = $this->connection->put("$endpoint/{$objectId}", ['json' => $data, 'query' => $this->getQuery()]);
+        $ref = $this->pending['ref']++;
 
-        $jsonResult = json_decode($clientResult->getBody()->getContents());
-
-        if($jsonResult !== false)
-        {
-            if($returnResult == false)
+        return $this->pending['update'][$ref] = $this->connection->put("$endpoint/{$objectId}", ['json' => $data, 'query' => $this->getQuery()])
+            ->then (function ($result) use ($ref, $returnResult)
             {
-                return in_array($clientResult->getStatusCode(), [200, 304]);
-            }
+                unset($this->pending['update'][$ref]);
 
-            $connection = $this->model->getConnectionName();
+                if($returnResult == false)
+                {
+                    return in_array($result->getStatusCode(), [200, 304]);
+                }
 
-            $dataVariable = $this->getDataVariable('update');
+                $rawResult = $result->getBody()->getContents();
 
-            return $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
-        }
+                $jsonResult = json_decode($rawResult);
 
-        return false;
+                if($jsonResult !== false)
+                {
+                    $connection = $this->model->getConnectionName();
+
+                    $dataVariable = $this->getDataVariable('update');
+
+                    return $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
+                }
+
+                return false;
+            });
     }
 
     public function query($key, $value = null)

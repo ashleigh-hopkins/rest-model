@@ -908,6 +908,11 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return $this;
     }
 
+    public function getClientHasFilter()
+    {
+        return static::getConnectionConfig($this->connection, 'has_filter');
+    }
+
     public function getConnection()
     {
         return static::resolveConnection($this->connection);
