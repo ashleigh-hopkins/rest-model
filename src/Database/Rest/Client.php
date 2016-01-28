@@ -35,6 +35,50 @@ class Client
         $this->endpoint = $endpoint;
     }
 
+
+    protected function clientCall($verb, $endpoint, $options = [], callable $successCallback = null, callable $failureCallback = null, $name = null)
+    {
+        if($name === null)
+        {
+            list(, $caller) = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
+
+            $name = substr($caller['function'], 0, count($caller['function']) - 6);
+        }
+
+        $ref = $this->getNextReference();
+
+        $this->startLog($ref, $endpoint, $name);
+
+        return $this->pending[$name][$ref] = $this->connection->{"{$verb}Async"}($endpoint, $options + ['query' => $this->getQuery(), 'headers' => $this->getHeaders()])
+            ->then(
+            function($response) use($name, $ref, $successCallback)
+            {
+                $this->endLog($ref, $response);
+
+                unset($this->pending[$name][$ref]);
+
+                if($successCallback !== null)
+                {
+                    return $successCallback($response);
+                }
+
+                return $response;
+            },
+            function($response) use($name, $ref, $failureCallback)
+            {
+                $this->endLog($ref, $response->getResponse());
+
+                unset($this->pending[$name][$ref]);
+
+                if($failureCallback !== null)
+                {
+                    return $failureCallback($response);
+                }
+
+                return null;
+            });
+    }
+
     public function destroy($id)
     {
         return $this->destroyAsync($id)->wait(true);
@@ -48,24 +92,10 @@ class Client
 
         $endpoint = str_replace_template($this->endpoint, $id) . "/{$objectId}";
 
-        $ref = $this->getNextReference();
-
-        $this->startLog($ref, $endpoint, 'index');
-
-        return $this->pending['destroy'][$ref] = $this->connection->deleteAsync($endpoint, ['query' => $this->getQuery(), 'headers' => $this->getHeaders()])
-            ->then(
-                function($result) use($ref)
-                {
-                    $this->endLog($ref, $result);
-
-                    unset($this->pending['head'][$ref]);
-
-                    return in_array($result->getStatusCode(), [200, 204]);
-                },
-                function ($result) use($ref)
-                {
-                    return $this->onClientFailure($result, 'destroy', $ref);
-                });
+        return $this->clientCall('delete', $endpoint, [], function($response)
+        {
+            return in_array($response->getStatusCode(), [200, 204]);
+        });
     }
 
     public function head($id)
@@ -81,23 +111,10 @@ class Client
 
         $endpoint = str_replace_template($this->endpoint, $id) . "/{$objectId}";
 
-        $ref = $this->getNextReference();
-
-        $this->startLog($ref, $endpoint, 'head');
-
-        return $this->pending['head'][$ref] = $this->connection->headAsync($endpoint, ['query' => $this->getQuery(), 'headers' => $this->getHeaders()])
-            ->then(function($result) use ($ref)
-            {
-                $this->endLog($ref, $result);
-
-                unset($this->pending['head'][$ref]);
-
-                return $result->getHeaders();
-            },
-            function ($result) use($ref)
-            {
-                return $this->onClientFailure($result, 'head', $ref);
-            });
+        return $this->clientCall('head', $endpoint, [], function($response)
+        {
+            return $response->getHeaders();
+        });
     }
 
     public function index($id = null)
@@ -111,34 +128,21 @@ class Client
 
         $endpoint = str_replace_template($this->endpoint, $id);
 
-        $ref = $this->getNextReference();
+        return $this->clientCall('get', $endpoint, [], function($response)
+        {
+            $jsonResult = json_decode($response->getBody()->getContents());
 
-        $this->startLog($ref, $endpoint, 'index');
-
-        return $this->pending['index'][$ref] = $this->connection->getAsync($endpoint, ['query' => $this->getQuery(), 'headers' => $this->getHeaders()])
-            ->then(function ($result) use ($ref)
+            if($jsonResult !== false)
             {
-                $this->endLog($ref, $result);
+                $connection = $this->model->getConnectionName();
 
-                unset($this->pending['index'][$ref]);
+                $dataVariable = $this->getDataVariable('index');
 
-                $jsonResult = json_decode($result->getBody()->getContents());
+                return $this->model->hydrate($dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult, $connection, $this->eagerLoad);
+            }
 
-                if($jsonResult !== false)
-                {
-                    $connection = $this->model->getConnectionName();
-
-                    $dataVariable = $this->getDataVariable('index');
-
-                    return $this->model->hydrate($dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult, $connection, $this->eagerLoad);
-                }
-
-                return null;
-            },
-            function ($result) use($ref)
-            {
-                return $this->onClientFailure($result, 'index', $ref);
-            });
+            return null;
+        });
     }
 
     public function show($id)
@@ -181,49 +185,36 @@ class Client
             }
         }
 
-        $ref = $this->getNextReference();
+        return $this->clientCall('get', $endpoint, [], function($response) use($existing, $hash)
+        {
+            $connection = $this->model->getConnectionName();
 
-        $this->startLog($ref, $endpoint, 'index');
-
-        return $this->pending['show'][$ref] = $this->connection->getAsync($endpoint, ['query' => $this->getQuery(), 'headers' => $this->getHeaders()])
-            ->then(function($clientResult) use($ref, $existing, $hash)
+            if ($response->getStatusCode() == 304)
             {
-                $this->endLog($ref, $clientResult);
+                return $this->model->hydrate([$existing['object']], $connection, $this->eagerLoad)->first();
+            }
 
-                unset($this->pending['show'][$ref]);
+            $rawResult = $response->getBody()->getContents();
 
-                $connection = $this->model->getConnectionName();
+            $jsonResult = json_decode($rawResult);
 
-                if($clientResult->getStatusCode() == 304)
+            if ($jsonResult !== false)
+            {
+                $dataVariable = $this->getDataVariable('show');
+
+                $result = $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
+
+                if (array_get($this->config, 'cache.enabled'))
                 {
-                    return $this->model->hydrate([$existing['object']], $connection, $this->eagerLoad)->first();
-                }
-
-                $rawResult = $clientResult->getBody()->getContents();
-
-                $jsonResult = json_decode($rawResult);
-
-                if($jsonResult !== false)
-                {
-                    $dataVariable = $this->getDataVariable('show');
-
-                    $result = $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
-
-                    if(array_get($this->config, 'cache.enabled'))
+                    if ($etag = $response->getHeader('ETag'))
                     {
-                        if ($etag = $clientResult->getHeader('ETag'))
-                        {
-                            \Cache::put($hash, ['etag' => $etag[0], 'object' => $result->toArray()], array_get($this->config, 'cache.lifetime', 1));
-                        }
+                        \Cache::put($hash, ['etag' => $etag[0], 'object' => $result->toArray()], array_get($this->config, 'cache.lifetime', 1));
                     }
                 }
+            }
 
-                return null;
-            },
-            function ($result) use($ref)
-            {
-                return $this->onClientFailure($result, 'show', $ref);
-            });
+            return null;
+        });
     }
 
     public function store($id = null, $data = [], $returnResult = false)
@@ -237,41 +228,26 @@ class Client
 
         $endpoint = str_replace_template($this->endpoint, $id);
 
-        $ref = $this->getNextReference();
-
-        $this->startLog($ref, $endpoint, 'index', $data);
-
-        return $this->pending['store'][$ref] = $this->connection->postAsync($endpoint, ['json' => $data, 'query' => $this->getQuery(), 'headers' => $this->getHeaders()])
-            ->then(function($result) use ($ref, $returnResult)
+        return $this->clientCall('post', $endpoint, ['json' => $data], function($response) use($returnResult)
+        {
+            if($returnResult == false)
             {
-                $this->endLog($ref, $result);
+                return in_array($response->getStatusCode(), [200, 304]);
+            }
 
-                unset($this->pending['store'][$ref]);
+            $jsonResult = json_decode($response->getBody()->getContents());
 
-                if($returnResult == false)
-                {
-                    return in_array($result->getStatusCode(), [200, 304]);
-                }
-
-                $rawResult = $result->getBody()->getContents();
-
-                $jsonResult = json_decode($rawResult);
-
-                if($jsonResult !== false)
-                {
-                    $connection = $this->model->getConnectionName();
-
-                    $dataVariable = $this->getDataVariable('store');
-
-                    return $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
-                }
-
-                return null;
-            },
-            function ($result) use($ref)
+            if($jsonResult !== false)
             {
-                return $this->onClientFailure($result, 'store', $ref);
-            });
+                $connection = $this->model->getConnectionName();
+
+                $dataVariable = $this->getDataVariable('store');
+
+                return $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
+            }
+
+            return null;
+        });
     }
 
     public function updateAsync($id, $data = [], $returnResult = false)
@@ -282,41 +258,26 @@ class Client
 
         $endpoint = str_replace_template($this->endpoint, $id) . "/{$objectId}";
 
-        $ref = $this->getNextReference();
-
-        $this->startLog($ref, $endpoint, 'index', $data);
-
-        return $this->pending['update'][$ref] = $this->connection->put($endpoint, ['json' => $data, 'query' => $this->getQuery(), 'headers' => $this->getHeaders()])
-            ->then (function ($result) use ($ref, $returnResult)
+        return $this->clientCall('put', $endpoint, ['json' => $data], function($response) use($returnResult)
+        {
+            if($returnResult == false)
             {
-                $this->endLog($ref, $result);
+                return in_array($response->getStatusCode(), [200, 304]);
+            }
 
-                unset($this->pending['update'][$ref]);
+            $jsonResult = json_decode($response->getBody()->getContents());
 
-                if($returnResult == false)
-                {
-                    return in_array($result->getStatusCode(), [200, 304]);
-                }
-
-                $rawResult = $result->getBody()->getContents();
-
-                $jsonResult = json_decode($rawResult);
-
-                if($jsonResult !== false)
-                {
-                    $connection = $this->model->getConnectionName();
-
-                    $dataVariable = $this->getDataVariable('update');
-
-                    return $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
-                }
-
-                return false;
-            },
-            function ($result) use($ref)
+            if($jsonResult !== false)
             {
-                return $this->onClientFailure($result, 'update', $ref);
-            });
+                $connection = $this->model->getConnectionName();
+
+                $dataVariable = $this->getDataVariable('update');
+
+                return $this->model->hydrate([$dataVariable ? data_get($jsonResult, $dataVariable) : $jsonResult], $connection, $this->eagerLoad)->first();
+            }
+
+            return false;
+        });
     }
 
     public function query($key, $value = null)
@@ -506,14 +467,5 @@ class Client
     protected function getNextReference()
     {
         return static::$requestReference++;
-    }
-
-    protected function onClientFailure($result, $type, $ref)
-    {
-        $this->endLog($ref, $result->getResponse());
-
-        unset($this->pending[$type][$ref]);
-
-        return null;
     }
 }
