@@ -334,6 +334,11 @@ class Client
         return $this;
     }
 
+    public function where($key, $value = null)
+    {
+        return $this->query($key, $value);
+    }
+
     public function header($key, $value = null)
     {
         if(is_array($key) == false)
@@ -392,6 +397,11 @@ class Client
         }
 
         throw (new ModelNotFoundException())->setModel(get_class($this->model));
+    }
+
+    public function get()
+    {
+        return $this->indexAsync();
     }
 
     private function getDataVariable($method)
