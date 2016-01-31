@@ -4,13 +4,16 @@ use Database\Rest\Client;
 use Database\Rest\Collection;
 use Database\Rest\Descriptors\Contracts\Descriptor;
 use Database\Rest\Model;
+use Database\Rest\Relations\ComesWithMany;
+use Database\Rest\Relations\Relation;
 use GuzzleHttp\Client as GuzzleClient;
 use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Str;
 use Psr\Http\Message\ResponseInterface;
 use Symfony\Component\HttpFoundation\Response;
 
-class BaseDescriptor implements Descriptor
+abstract class BaseDescriptor implements Descriptor
 {
     protected static $cachedClients = [];
 
@@ -28,6 +31,8 @@ class BaseDescriptor implements Descriptor
      * @var Model
      */
     protected $model;
+
+    protected $eagerLoad = [];
 
     /**
      * BaseDescriptor constructor.
@@ -210,14 +215,123 @@ class BaseDescriptor implements Descriptor
 
     public function get()
     {
-        return $this->getMany();
+        $this->loadPreRelations();
+
+        $models = $this->getMany();
+
+        if (count($models) > 0) {
+            $models = $this->eagerLoadRelations($models);
+        }
+
+        return $this->getModel()->newCollection($models);
+    }
+
+    public function eagerLoadRelations(array $models)
+    {
+        foreach ($this->eagerLoad as $name) {
+            // For nested eager loads we'll skip loading them here and they will be set as an
+            // eager load on the query to retrieve the relation so that they will be eager
+            // loaded on that query, because that is where they get hydrated as models.
+            if (strpos($name, '.') === false) {
+                $models = $this->loadRelation($models, $name);
+            }
+        }
+
+        return $models;
+    }
+
+    public function loadPreRelations()
+    {
+        foreach ($this->eagerLoad as $name) {
+            // For nested eager loads we'll skip loading them here and they will be set as an
+            // eager load on the query to retrieve the relation so that they will be eager
+            // loaded on that query, because that is where they get hydrated as models.
+            if (strpos($name, '.') === false) {
+                $this->loadPreRelation($name);
+            }
+        }
+    }
+
+    /**
+     * @param $name
+     * @return Relation
+     */
+    public function getRelation($name)
+    {
+        // We want to run a relationship query without any constrains so that we will
+        // not have to remove these where clauses manually which gets really hacky
+        // and is error prone while we remove the developer's own where clauses.
+        $relation = $this->getModel()->$name();
+
+        $nested = $this->nestedRelations($name);
+
+        // If there are nested relationships set on the query, we will put those onto
+        // the query instances so that they can be handled after this relationship
+        // is loaded. In this way they will all trickle down as they are loaded.
+        if (count($nested) > 0) {
+            $relation->getQuery()->with($nested);
+        }
+
+        return $relation;
+    }
+
+    protected function isNested($name, $relation)
+    {
+        $dots = Str::contains($name, '.');
+
+        return $dots && Str::startsWith($name, $relation.'.');
+    }
+
+    protected function nestedRelations($relation)
+    {
+        $nested = [];
+
+        // We are basically looking for any relationships that are nested deeper than
+        // the given top-level relationship. We will just check for any relations
+        // that start with the given top relations and adds them to our arrays.
+        foreach ($this->eagerLoad as $name) {
+            if ($this->isNested($name, $relation)) {
+                $nested[] = substr($name, strlen($relation.'.'));
+            }
+        }
+
+        return $nested;
+    }
+
+    protected function loadRelation(array $models, $name)
+    {
+        // First we will "back up" the existing where conditions on the query so we can
+        // add our eager constraints. Then we will merge the wheres that were on the
+        // query back to it in order that any where conditions might be specified.
+        $relation = $this->getRelation($name);
+
+        $relation->addEagerConstraints($models);
+
+        $models = $relation->initRelation($models, $name);
+
+        // Once we have the results, we just match those back up to their parent models
+        // using the relationship instance. Then we just return the finished arrays
+        // of models which have been eagerly hydrated and are readied for return.
+        $results = $relation->getEager();
+
+        return $relation->match($models, $results, $name);
+    }
+
+    protected function loadPreRelation($name)
+    {
+        $relation = $this->getRelation($name);
+
+        if($relation instanceof ComesWithMany)
+        {
+            $relation->addPreConstraints($this);
+        }
     }
 
     function returnOne($data)
     {
         if($data instanceof Model == false)
         {
-            return $this->model->hydrate([$data], $this->connection)->first();
+            return $this->model->hydrate([$data], $this->connection)->all();
         }
 
         return $data;
@@ -227,7 +341,7 @@ class BaseDescriptor implements Descriptor
     {
         if($data instanceof Collection == false)
         {
-            return $this->model->hydrate($data, $this->connection);
+            return $this->model->hydrate($data, $this->connection)->all();
         }
 
         return $data;
@@ -235,6 +349,8 @@ class BaseDescriptor implements Descriptor
 
     public function with($relations)
     {
+        $relations = is_array($relations) ? $relations : func_get_args();
+
         if($relations)
         {
             $nonClosureRelations = [];
@@ -257,9 +373,11 @@ class BaseDescriptor implements Descriptor
         return $this;
     }
 
+    abstract public function remoteLoad($relations);
+
     public function find($id)
     {
-        return $this->getOne($id);
+        return $this->where($this->model->getKeyName(), $id)->first();
     }
 
     /**
@@ -278,12 +396,17 @@ class BaseDescriptor implements Descriptor
 
     public function first()
     {
-        return $this->take(1)->getMany()->first();
+        return $this->take(1)->get()->first();
     }
 
     public function getModel()
     {
         return $this->model;
+    }
+
+    protected function getQuery()
+    {
+        return $this->query;
     }
 
     /**
@@ -298,13 +421,13 @@ class BaseDescriptor implements Descriptor
 
             if($config !== null)
             {
-                return (new Client(static::$cachedClients[$this->connection] = new GuzzleClient($config), '', []))->query($this->query);
+                return (new Client(static::$cachedClients[$this->connection] = new GuzzleClient($config), '', []))->query($this->getQuery());
             }
 
             throw new \Exception("Missing config for rest connection [{$this->connection}]");
         }
 
-        return (new Client(static::$cachedClients[$this->connection], '', []))->query($this->query)->header($this->headers);
+        return (new Client(static::$cachedClients[$this->connection], '', []))->query($this->getQuery())->header($this->headers);
     }
 
     protected function getClientConfig()
@@ -371,15 +494,9 @@ class BaseDescriptor implements Descriptor
         return $this->returnMany($items);
     }
 
-    protected function getOneResponseAccessor($body)
-    {
-        return data_get($body, 'data');
-    }
+    abstract protected function getOneResponseAccessor($body);
 
-    protected function getManyResponseAccessor($body)
-    {
-        return data_get($body, 'data');
-    }
+    abstract protected function getManyResponseAccessor($body);
 
     protected function getJsonFromResponse(ResponseInterface $response)
     {

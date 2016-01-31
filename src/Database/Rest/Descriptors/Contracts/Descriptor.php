@@ -56,6 +56,12 @@ interface Descriptor
     function with($relations);
 
     /**
+     * @param $relations
+     * @return static
+     */
+    function remoteLoad($relations);
+
+    /**
      * @return Model
      */
     function getModel();

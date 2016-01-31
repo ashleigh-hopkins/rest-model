@@ -24,8 +24,6 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
 
     protected $relations = [];
 
-    protected $autoRelations = [];
-
     protected $dates = [];
 
     protected $dateFormat;
@@ -81,48 +79,11 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
     /**
      * @param array $attributes
      * @param string|null $connection
-     * @param array $autoRelations
      * @return static
      */
-    public function newFromDescriptor($attributes = [], $connection = null, $autoRelations = [])
+    public function newFromDescriptor($attributes = [], $connection = null)
     {
-        $model = $this->newInstance([], true)->setAutoRelations($autoRelations);
-
-        if($model->autoRelations)
-        {
-            foreach ($model->autoRelations as $k => $relationName)
-            {
-                if($relationName instanceof \Closure)
-                {
-                    $relationName = $k;
-                }
-
-                $relation = $model->$relationName();
-
-                if($item = data_get($attributes, $relation->field))
-                {
-                    $class = $relation->related;
-
-                    if($relation->type == 'many')
-                    {
-                        $model->relations[$relationName] = $item = $class::hydrate($item);
-                    }
-                    else if ($relation->type == 'one')
-                    {
-                        $model->relations[$relationName] = $item = $class::hydrate([$item])->first();
-                    }
-                }
-
-                if(is_object($attributes))
-                {
-                    unset($attributes->{$relation->field});
-                }
-                else if (is_array($attributes))
-                {
-                    unset($attributes[$relation->field]);
-                }
-            }
-        }
+        $model = $this->newInstance([], true);
 
         $model->setRawAttributes((array) $attributes, true);
 
@@ -134,10 +95,9 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
     /**
      * @param $items
      * @param null $connection
-     * @param array $autoRelations
      * @return Collection
      */
-    public static function hydrate($items, $connection = null, $autoRelations = [])
+    public static function hydrate($items, $connection = null)
     {
         $instance = (new static)->setConnection($connection);
 
@@ -146,8 +106,8 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
             return $instance->newCollection([]);
         }
 
-        $items = array_map(function ($item) use ($instance, $autoRelations) {
-            return $instance->newFromDescriptor($item, null, $autoRelations);
+        $items = array_map(function ($item) use ($instance) {
+            return $instance->newFromDescriptor($item, null);
         }, $items);
 
         return $instance->newCollection($items);
@@ -221,6 +181,19 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return $count;
     }
 
+    public function load($relations)
+    {
+        if (is_string($relations)) {
+            $relations = func_get_args();
+        }
+
+        $descriptor = $this->newDescriptor()->with($relations);
+
+        $descriptor->eagerLoadRelations([$this]);
+
+        return $this;
+    }
+
     public static function with($relations)
     {
         $relations = is_array($relations) ? $relations : func_get_args();
@@ -228,13 +201,6 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         $instance = new static;
 
         return $instance->newDescriptor()->with($relations);
-    }
-
-    public function setAutoRelations($relations)
-    {
-        $this->autoRelations = array_merge($this->autoRelations, $relations);
-
-        return $this;
     }
 
     public function delete()
@@ -979,23 +945,5 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         $instance = new static;
 
         return call_user_func_array([$instance, $method], $parameters);
-    }
-
-    protected function hasMany($related, $field)
-    {
-        return (object)[
-            'related' => $related,
-            'field' => $field,
-            'type' => 'many',
-        ];
-    }
-
-    protected function hasOne($related, $field)
-    {
-        return (object)[
-            'related' => $related,
-            'field' => $field,
-            'type' => 'one',
-        ];
     }
 }

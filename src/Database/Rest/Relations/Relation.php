@@ -57,9 +57,7 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
      */
     public function getEager()
     {
-        $key = $this->related->getKeyForStore();
 
-        return new Collection($this->descriptor->index($key));
     }
 
     /**

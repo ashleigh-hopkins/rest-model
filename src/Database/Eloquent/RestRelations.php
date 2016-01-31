@@ -1,6 +1,8 @@
 <?php namespace Database\Rest\Eloquent;
 
 use Database\Rest\Relations\BelongsTo;
+use Database\Rest\Relations\ComesWith;
+use Database\Rest\Relations\ComesWithMany;
 use Database\Rest\Relations\HasMany;
 use Database\Rest\Model as RestModel;
 use Illuminate\Support\Str;
@@ -56,5 +58,39 @@ trait RestRelations
         }
 
         return parent::hasMany($related, $foreignKey, $localKey);
+    }
+
+    public function comesWith($related, $accessor = null, $requestName = null)
+    {
+        if (is_null($accessor)) {
+            list(, $caller) = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
+
+            $accessor = $caller['function'];
+        }
+
+        if (is_null($requestName)) {
+            $requestName = $accessor;
+        }
+
+        $instance = new $related;
+
+        return new ComesWith($instance->newDescriptor(), $this, $accessor, $requestName);
+    }
+
+    public function comesWithMany($related, $accessor = null, $requestName = null)
+    {
+        if (is_null($accessor)) {
+            list(, $caller) = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
+
+            $accessor = $caller['function'];
+        }
+
+        if (is_null($requestName)) {
+            $requestName = $accessor;
+        }
+
+        $instance = new $related;
+
+        return new ComesWithMany($instance->newDescriptor(), $this, $accessor, $requestName);
     }
 }
