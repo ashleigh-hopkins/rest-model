@@ -1,6 +1,7 @@
 <?php namespace Database\Rest\Relations;
 
 use Database\Rest\Client;
+use Database\Rest\Descriptors\Contracts\Descriptor;
 use Database\Rest\Model;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
@@ -13,7 +14,7 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
      *
      * @var Client
      */
-    protected $client;
+    protected $descriptor;
 
     /**
      * The parent model instance.
@@ -39,14 +40,14 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
     /**
      * Create a new relation instance.
      *
-     * @param Client $client
+     * @param Descriptor $descriptor
      * @param Model $parent
      */
-    public function __construct($client, $parent)
+    public function __construct($descriptor, $parent)
     {
-        $this->client = $client;
+        $this->descriptor = $descriptor;
         $this->parent = $parent;
-        $this->related = $client->getModel();
+        $this->related = $descriptor->getModel();
     }
 
     /**
@@ -58,7 +59,7 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
     {
         $key = $this->related->getKeyForStore();
 
-        return new Collection($this->client->index($key));
+        return new Collection($this->descriptor->index($key));
     }
 
     /**
@@ -79,7 +80,7 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
      */
     public function rawUpdate(array $attributes = [])
     {
-        return $this->client->update($this->related->getKey(), $attributes);
+        return $this->descriptor->update($this->related->getKey(), $attributes);
     }
 
     /**
@@ -116,9 +117,9 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
      *
      * @return Client
      */
-    public function getClient()
+    public function getDescriptor()
     {
-        return $this->client;
+        return $this->descriptor;
     }
 
     /**
@@ -128,7 +129,7 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
      */
     public function getQuery()
     {
-        return $this->client;
+        return $this->descriptor;
     }
 
     /**
@@ -138,7 +139,7 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
      */
     public function getBaseQuery()
     {
-        return $this->client;
+        return $this->descriptor;
     }
 
     /**
@@ -258,9 +259,9 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
      */
     public function __call($method, $parameters)
     {
-        $result = call_user_func_array([$this->client, $method], $parameters);
+        $result = call_user_func_array([$this->descriptor, $method], $parameters);
 
-        if ($result === $this->client) {
+        if ($result === $this->descriptor) {
             return $this;
         }
 
@@ -274,6 +275,6 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
      */
     public function __clone()
     {
-        $this->client = clone $this->client;
+        $this->descriptor = clone $this->descriptor;
     }
 }

@@ -1,8 +1,6 @@
 <?php namespace Database\Rest;
 
-use Illuminate\Support\Collection as BaseCollection;
-
-class Collection extends BaseCollection
+class Collection extends \Illuminate\Database\Eloquent\Collection
 {
 
 }

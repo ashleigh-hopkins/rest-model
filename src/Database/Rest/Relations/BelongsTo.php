@@ -12,18 +12,13 @@ class BelongsTo extends Relation
 
     protected $foreignKey;
 
-    /**
-     * @var PromiseInterface[]
-     */
-    protected $pendingQueries = [];
-
-    public function __construct($client, $parent, $foreignKey, $otherKey, $relation)
+    public function __construct($descriptor, $parent, $foreignKey, $otherKey, $relation)
     {
         $this->otherKey = $otherKey;
         $this->relation = $relation;
         $this->foreignKey = $foreignKey;
 
-        parent::__construct($client, $parent);
+        parent::__construct($descriptor, $parent);
     }
 
 
@@ -57,18 +52,7 @@ class BelongsTo extends Relation
             }
         }
 
-        if($this->related->getClientHasFilter())
-        {
-            $this->client->query("filter[{$this->otherKey}]", $ids);
-            $this->pendingQueries[] = $this->client->indexAsync();
-        }
-        else
-        {
-            foreach ($ids as $id)
-            {
-                $this->pendingQueries[$id] = $this->client->showAsync($id);
-            }
-        }
+        $this->descriptor->where($this->otherKey, $ids);
     }
 
     /**
@@ -94,26 +78,7 @@ class BelongsTo extends Relation
      */
     public function getEager()
     {
-        if($this->related->getClientHasFilter())
-        {
-            $items = $this->pendingQueries[0]->wait();
-        }
-        else
-        {
-            $items = [];
-
-            foreach ($this->pendingQueries as $query)
-            {
-                $item = $query->wait(true);
-
-                if($item !== null)
-                {
-                    $items[] = $item;
-                }
-            }
-        }
-
-        return new Collection($items);
+        return $this->descriptor->get();
     }
 
     /**

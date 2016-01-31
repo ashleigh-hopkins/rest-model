@@ -2,6 +2,7 @@
 
 use ArrayAccess;
 use Carbon\Carbon;
+use Database\Rest\Descriptors\Contracts\Descriptor;
 use DateTime;
 use Exception;
 use Illuminate\Contracts\Queue\QueueableEntity;
@@ -43,7 +44,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
 
     protected $with = [];
 
-    protected static $cachedClients;
+    protected static $cachedDescriptors;
 
     public static $snakeAttributes = true;
 
@@ -83,7 +84,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
      * @param array $autoRelations
      * @return static
      */
-    public function newFromClient($attributes = [], $connection = null, $autoRelations = [])
+    public function newFromDescriptor($attributes = [], $connection = null, $autoRelations = [])
     {
         $model = $this->newInstance([], true)->setAutoRelations($autoRelations);
 
@@ -146,7 +147,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         }
 
         $items = array_map(function ($item) use ($instance, $autoRelations) {
-            return $instance->newFromClient($item, null, $autoRelations);
+            return $instance->newFromDescriptor($item, null, $autoRelations);
         }, $items);
 
         return $instance->newCollection($items);
@@ -161,11 +162,11 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return $model;
     }
 
-    public static function all($id = [])
+    public static function all()
     {
         $instance = new static;
 
-        return $instance->newClient()->index($id);
+        return $instance->newDescriptor()->get();
     }
 
     public static function findOrNew($id)
@@ -183,12 +184,12 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
     public function fresh()
     {
         if (! $this->exists) {
-            return;
+            return null;
         }
 
         $instance = new static;
 
-        return $instance->newClient()->show($this->getKey());
+        return $instance->newDescriptor()->find($this->getKey());
     }
 
     public static function destroy($ids)
@@ -226,7 +227,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
 
         $instance = new static;
 
-        return $instance->newClient()->with($relations);
+        return $instance->newDescriptor()->with($relations);
     }
 
     public function setAutoRelations($relations)
@@ -244,9 +245,9 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
 
         if ($this->exists) {
 
-            $client = $this->newClient();
+            $descriptor = $this->newDescriptor();
 
-            $this->performDeleteOnModel($client);
+            $this->performDeleteOnModel($descriptor);
 
             $this->exists = false;
 
@@ -254,32 +255,32 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         }
     }
 
-    protected function performDeleteOnModel(Client $client)
+    protected function performDeleteOnModel(Descriptor $descriptor)
     {
-        $client->destroy($this->getKey());
+        $descriptor->deleteOne($this->getKey());
     }
 
-    public function update(array $attributes = [], array $options = [])
+    public function update(array $attributes = [])
     {
-        return $this->fill($attributes)->save($options);
+        return $this->fill($attributes)->save();
     }
 
     public function save()
     {
-        $client = $this->newClient();
+        $descriptor = $this->newDescriptor();
 
         // If the model already exists in the database we can just update our record
         // that is already in this database using the current IDs in this "where"
         // clause to only update this model. Otherwise, we'll just insert them.
         if ($this->exists) {
-            $saved = $this->performUpdate($client);
+            $saved = $this->performUpdate($descriptor);
         }
 
         // If the model is brand new, we'll insert it into our database and set the
         // ID attribute on the model to the value of the newly inserted row's ID
         // which is typically an auto-increment value managed by the database.
         else {
-            $saved = $this->performInsert($client);
+            $saved = $this->performInsert($descriptor);
         }
 
         if ($saved) {
@@ -294,25 +295,30 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         $this->syncOriginal();
     }
 
-    protected function performUpdate(Client $client)
+    protected function performUpdate(Descriptor $descriptor)
     {
         $dirty = $this->getDirty();
 
-        if (count($dirty) > 0) {
-            return $client->update($this->getKey(), $dirty);
+        if (count($dirty) > 0)
+        {
+            $object = $descriptor->updateOne($this->getKey(), $dirty);
+
+            $this->fill($object->toArray());
         }
 
         return true;
     }
 
-    protected function performInsert(Client $client)
+    protected function performInsert(Descriptor $descriptor)
     {
         // If the model has an incrementing key, we can use the "insertGetId" method on
         // the query builder, which will give us back the final inserted ID for this
         // table from the database. Not all tables have to be incrementing though.
         $attributes = $this->attributes;
 
-        $this->insertAndUpdateFromRemote($client, $attributes);
+        $object = $descriptor->storeOne($attributes);
+
+        $this->fill($object->toArray());
 
         // We will go ahead and set the exists property to true, so that it is set when
         // the created event is fired, just in case the developer tries to update it
@@ -324,31 +330,33 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return true;
     }
 
-    protected function insertAndUpdateFromRemote(Client $client, $attributes)
-    {
-        $key = $this->getKeyForStore();
-
-        // we only care about the last id
-        $object = $client->store($key, $attributes, true);
-
-        $this->fill($object->toArray());
-    }
-
     /**
-     * @return Client
+     * @return Descriptor
      */
-    public function newClient()
+    public function newDescriptor()
     {
         if($this->connection === null)
         {
             $this->connection = \Config::get('rest.default');
         }
 
-        $conn = $this->getConnection();
+        return $this->getDescriptor()->with($this->with);
+    }
 
-        $client = new Client($conn, $this->getEndpoint(), static::getConnectionConfig($this->connection));
+    /**
+     * @return Descriptor
+     * @throws Exception
+     */
+    public function getDescriptor()
+    {
+        $config = config("rest.connections.{$this->connection}");
 
-        return $client->setModel($this)->with($this->with);
+        if($config !== null)
+        {
+            return app(array_get($config, 'descriptor'), [$this->connection, $this, $config]);
+        }
+
+        throw new Exception("Missing config for rest connection [{$this->connection}]");
     }
 
     public function newCollection(array $models = [])
@@ -362,14 +370,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
             return $this->endpoint;
         }
 
-        $baseName = class_basename($this);
-
-        if(static::getConnectionConfig($this->connection, 'endpoint_plural'))
-        {
-            $baseName = Str::plural($baseName);
-        }
-
-        return $this->endpoint = str_replace('\\', '', str_rest_url($baseName));
+        return $this->endpoint = str_replace('\\', '', str_rest_url(Str::plural(class_basename($this))));
     }
 
     public function getKey()
@@ -908,16 +909,6 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return $this;
     }
 
-    public function getClientHasFilter()
-    {
-        return static::getConnectionConfig($this->connection, 'has_filter');
-    }
-
-    public function getConnection()
-    {
-        return static::resolveConnection($this->connection);
-    }
-
     public function getConnectionName()
     {
         return $this->connection;
@@ -928,35 +919,6 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         $this->connection = $name;
 
         return $this;
-    }
-
-    public static function resolveConnection($connection = null)
-    {
-        if($connection === null)
-        {
-            $connection = \Config::get('rest.default');
-        }
-
-        if(isset(static::$cachedClients[$connection]) == false)
-        {
-            $config = static::getConnectionConfig($connection, 'client');
-
-            if ($config !== null)
-            {
-                return static::$cachedClients[$connection] = new \GuzzleHttp\Client($config);
-            }
-
-            throw new Exception("Missing config resolving rest connection [{$connection}]");
-        }
-
-        return static::$cachedClients[$connection];
-    }
-
-    protected static function getConnectionConfig($connection = null, $dot = '')
-    {
-        $dot = $dot ? ".$dot" : '';
-
-        return \Config::get("rest.connections.{$connection}{$dot}");
     }
 
     public function __get($key)
@@ -1007,7 +969,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
 
     public function __call($method, $parameters)
     {
-        $client = $this->newClient();
+        $client = $this->newDescriptor();
 
         return call_user_func_array([$client, $method], $parameters);
     }
