@@ -331,7 +331,7 @@ abstract class BaseDescriptor implements Descriptor
     {
         if($data instanceof Model == false)
         {
-            return $this->model->hydrate([$data], $this->connection)->all();
+            return $this->model->hydrate([$data], $this->connection)->first();
         }
 
         return $data;
