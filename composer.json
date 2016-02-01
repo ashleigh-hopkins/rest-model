@@ -4,14 +4,17 @@
 	"authors": [
 		{
 			"name": "Ashleigh Hopkins",
-			"email": "a.hopkins@sureflap.co.uk"
+			"email": "ashleighhopkins87@gmail.com"
 		}
 	],
 	"autoload": {
 		"psr-4": {
 			"Database\\": "src/Database/",
 			"Repositories\\": "src/Repositories/"
-		}
+		},
+		"files": [
+			"src/helpers.php"
+		]
 	},
 	"require": {
         "guzzlehttp/guzzle": "^6.0",
