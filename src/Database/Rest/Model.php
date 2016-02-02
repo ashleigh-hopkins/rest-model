@@ -1,15 +1,14 @@
-<?php namespace Database\Rest;
+<?php namespace RestModel\Database\Rest;
 
 use ArrayAccess;
 use Carbon\Carbon;
-use Database\Rest\Descriptors\Contracts\Descriptor;
+use RestModel\Database\Rest\Descriptors\Contracts\Descriptor;
 use DateTime;
 use Exception;
 use Illuminate\Contracts\Queue\QueueableEntity;
 use Illuminate\Contracts\Routing\UrlRoutable;
 use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Contracts\Support\Jsonable;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
 use JsonSerializable;

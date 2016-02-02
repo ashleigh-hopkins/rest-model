@@ -1,11 +1,11 @@
-<?php namespace Database\Rest\Descriptors;
+<?php namespace RestModel\Database\Rest\Descriptors;
 
-use Database\Rest\Client;
-use Database\Rest\Collection;
-use Database\Rest\Descriptors\Contracts\Descriptor;
-use Database\Rest\Model;
-use Database\Rest\Relations\ComesWithMany;
-use Database\Rest\Relations\Relation;
+use RestModel\Database\Rest\Client;
+use RestModel\Database\Rest\Collection;
+use RestModel\Database\Rest\Descriptors\Contracts\Descriptor;
+use RestModel\Database\Rest\Model;
+use RestModel\Database\Rest\Relations\ComesWithMany;
+use RestModel\Database\Rest\Relations\Relation;
 use GuzzleHttp\Client as GuzzleClient;
 use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Database\Eloquent\ModelNotFoundException;

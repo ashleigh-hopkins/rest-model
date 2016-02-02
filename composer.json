@@ -9,8 +9,7 @@
 	],
 	"autoload": {
 		"psr-4": {
-			"Database\\": "src/Database/",
-			"Repositories\\": "src/Repositories/"
+			"RestModel\\": "src/"
 		},
 		"files": [
 			"src/helpers.php"

@@ -1,8 +1,6 @@
-<?php namespace Database\Rest;
+<?php namespace RestModel\Database\Rest;
 
-use GuzzleHttp\Promise\Promise;
 use GuzzleHttp\Promise\PromiseInterface;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Psr\Http\Message\ResponseInterface;
 
 class Client

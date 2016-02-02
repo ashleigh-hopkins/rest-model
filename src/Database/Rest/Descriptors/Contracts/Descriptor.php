@@ -1,7 +1,7 @@
-<?php namespace Database\Rest\Descriptors\Contracts;
+<?php namespace RestModel\Database\Rest\Descriptors\Contracts;
 
-use Database\Rest\Collection;
-use Database\Rest\Model;
+use RestModel\Database\Rest\Collection;
+use RestModel\Database\Rest\Model;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 interface Descriptor

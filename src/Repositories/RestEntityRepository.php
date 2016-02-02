@@ -1,7 +1,7 @@
-<?php namespace Repositories;
+<?php namespace RestModel\Repositories;
 
-use Database\Rest\Descriptors\Contracts\Descriptor;
-use Database\Rest\Model;
+use RestModel\Database\Rest\Descriptors\Contracts\Descriptor;
+use RestModel\Database\Rest\Model;
 
 abstract class RestEntityRepository
 {

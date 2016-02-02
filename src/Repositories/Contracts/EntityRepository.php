@@ -1,6 +1,6 @@
-<?php namespace Repositories\Contracts;
+<?php namespace RestModel\Repositories\Contracts;
 
-use Database\Rest\Descriptors\Contracts\Descriptor;
+use RestModel\Database\Rest\Descriptors\Contracts\Descriptor;
 
 interface EntityRepository extends \LaravelResource\Repositories\Contracts\EntityRepository
 {

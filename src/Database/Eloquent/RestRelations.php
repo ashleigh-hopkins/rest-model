@@ -1,10 +1,10 @@
-<?php namespace Database\Rest\Eloquent;
+<?php namespace RestModel\Database\Eloquent;
 
-use Database\Rest\Relations\BelongsTo;
-use Database\Rest\Relations\ComesWith;
-use Database\Rest\Relations\ComesWithMany;
-use Database\Rest\Relations\HasMany;
-use Database\Rest\Model as RestModel;
+use RestModel\Database\Rest\Relations\BelongsTo;
+use RestModel\Database\Rest\Relations\ComesWith;
+use RestModel\Database\Rest\Relations\ComesWithMany;
+use RestModel\Database\Rest\Relations\HasMany;
+use RestModel\Database\Rest\Model as RestModel;
 use Illuminate\Support\Str;
 
 trait RestRelations

@@ -1,8 +1,7 @@
-<?php namespace Database\Rest\Relations;
+<?php namespace RestModel\Database\Rest\Relations;
 
-use Database\Rest\Descriptors\Contracts\Descriptor;
-use Database\Rest\Model;
-use Illuminate\Database\Eloquent\Collection;
+use RestModel\Database\Rest\Descriptors\Contracts\Descriptor;
+use RestModel\Database\Rest\Model;
 
 class HasMany extends Relation
 {

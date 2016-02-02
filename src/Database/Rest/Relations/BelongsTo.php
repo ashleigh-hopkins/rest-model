@@ -1,8 +1,4 @@
-<?php namespace Database\Rest\Relations;
-
-use GuzzleHttp\Promise\Promise;
-use GuzzleHttp\Promise\PromiseInterface;
-use Illuminate\Database\Eloquent\Collection;
+<?php namespace RestModel\Database\Rest\Relations;
 
 class BelongsTo extends Relation
 {

@@ -1,10 +1,9 @@
-<?php namespace Database\Rest\Relations;
+<?php namespace RestModel\Database\Rest\Relations;
 
-use Database\Rest\Client;
-use Database\Rest\Descriptors\Contracts\Descriptor;
-use Database\Rest\Model;
+use RestModel\Database\Rest\Client;
+use RestModel\Database\Rest\Descriptors\Contracts\Descriptor;
+use RestModel\Database\Rest\Model;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Arr;
 
 abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
