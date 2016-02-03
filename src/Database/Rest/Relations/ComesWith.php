@@ -23,7 +23,7 @@ class ComesWith extends ComesWithMany
 
                 $results = $this->related->hydrate([$items]);
 
-                $this->related->newDescriptor()->eagerLoadRelations($results->all());
+                $this->descriptor->eagerLoadRelations($results->all());
 
                 $model->setRelation($relation, $results->first());
 

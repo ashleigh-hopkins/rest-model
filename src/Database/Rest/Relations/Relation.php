@@ -274,4 +274,9 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
     {
         $this->descriptor = clone $this->descriptor;
     }
+
+    public function newDescriptor()
+    {
+        return clone $this;
+    }
 }

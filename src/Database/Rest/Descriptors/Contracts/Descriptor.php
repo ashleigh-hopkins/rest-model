@@ -26,6 +26,13 @@ interface Descriptor
     function where($key, $value = null);
 
     /**
+     * @param string $key
+     * @param array $value
+     * @return static
+     */
+    function whereIn($key, $value);
+
+    /**
      * @param $limit
      * @return static
      */

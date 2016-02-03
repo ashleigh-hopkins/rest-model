@@ -3,6 +3,7 @@
 use RestModel\Database\Rest\Client;
 use RestModel\Database\Rest\Collection;
 use RestModel\Database\Rest\Descriptors\Contracts\Descriptor;
+use RestModel\Database\Rest\Exceptions\RestRemoteValidationException;
 use RestModel\Database\Rest\Model;
 use RestModel\Database\Rest\Relations\ComesWithMany;
 use RestModel\Database\Rest\Relations\Relation;
@@ -12,6 +13,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Str;
 use Psr\Http\Message\ResponseInterface;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
 
 abstract class BaseDescriptor implements Descriptor
 {
@@ -57,9 +59,27 @@ abstract class BaseDescriptor implements Descriptor
     {
         $endpoint = $this->getOneEndpoint($id);
 
-        return $this->newClient()->clientCallAsync('delete', $endpoint, [], function($response)
+        return $this->clientCallAsync('delete', $endpoint, [], function($response)
         {
             return $this->processDeleteOneResponse($response);
+        });
+    }
+
+    protected function clientCallAsync($method, $endpoint, $options = [], $successCallback = null, $failureCallback = null)
+    {
+        return $this->newClient()->clientCallAsync($method, $endpoint, $options, $successCallback, $failureCallback ?: function($exception)
+        {
+            $response = $exception->getResponse();
+
+            switch($response->getStatusCode())
+            {
+                case Response::HTTP_UNPROCESSABLE_ENTITY:
+                {
+                    throw new RestRemoteValidationException(json_decode($response->getBody()->getContents())->error, $response->getStatusCode());
+                }
+            }
+
+            throw new \Exception();
         });
     }
 
@@ -81,7 +101,7 @@ abstract class BaseDescriptor implements Descriptor
     {
         $endpoint = $this->getOneEndpoint($id);
 
-        return $this->newClient()->clientCallAsync('get', $endpoint, [], function($response)
+        return $this->clientCallAsync('get', $endpoint, [], function($response)
         {
             return $this->processOneResponse($response);
         });
@@ -96,7 +116,7 @@ abstract class BaseDescriptor implements Descriptor
     {
         $endpoint = $this->getManyEndpoint();
 
-        return $this->newClient()->clientCallAsync('post', $endpoint, ['json' => $attributes], function($response)
+        return $this->clientCallAsync('post', $endpoint, ['json' => $attributes], function($response)
         {
             $result = $this->processOneResponse($response);
 
@@ -113,7 +133,7 @@ abstract class BaseDescriptor implements Descriptor
     {
         $endpoint = $this->getOneEndpoint($id);
 
-        return $this->newClient()->clientCallAsync('put', $endpoint, ['json' => $attributes], function($response)
+        return $this->clientCallAsync('put', $endpoint, ['json' => $attributes], function($response)
         {
             $result = $this->processOneResponse($response);
 
@@ -151,7 +171,7 @@ abstract class BaseDescriptor implements Descriptor
             return $this->getManyOneAsync($id);
         }
 
-        return $this->newClient()->clientCallAsync('get', $this->getManyEndpoint(), [], function($response)
+        return $this->clientCallAsync('get', $this->getManyEndpoint(), [], function($response)
         {
             return $this->processManyResponse($response);
         });
@@ -170,7 +190,7 @@ abstract class BaseDescriptor implements Descriptor
         {
             $endpoint = $this->getOneEndpoint($id);
 
-            $tasks[] = $this->newClient()->clientCallAsync('get', $endpoint);
+            $tasks[] = $this->clientCallAsync('get', $endpoint);
         }
 
         $items = $this->waitForManyPromises($tasks);
@@ -189,6 +209,13 @@ abstract class BaseDescriptor implements Descriptor
         {
             $this->query[$k] = $v;
         }
+
+        return $this;
+    }
+
+    public function whereIn($key, $value)
+    {
+        $this->query[$key] = $value;
 
         return $this;
     }
@@ -243,12 +270,7 @@ abstract class BaseDescriptor implements Descriptor
     public function loadPreRelations()
     {
         foreach ($this->eagerLoad as $name) {
-            // For nested eager loads we'll skip loading them here and they will be set as an
-            // eager load on the query to retrieve the relation so that they will be eager
-            // loaded on that query, because that is where they get hydrated as models.
-            if (strpos($name, '.') === false) {
-                $this->loadPreRelation($name);
-            }
+            $this->loadPreRelation($name);
         }
     }
 
@@ -319,11 +341,36 @@ abstract class BaseDescriptor implements Descriptor
 
     protected function loadPreRelation($name)
     {
-        $relation = $this->getRelation($name);
-
-        if($relation instanceof ComesWithMany)
+        if(strstr($name, '.'))
         {
-            $relation->addPreConstraints($this);
+            $name = explode('.', $name);
+
+            $obj = $this;
+
+            foreach($name as $n)
+            {
+                $relation = $obj->getRelation($n);
+
+                if ($relation instanceof ComesWithMany)
+                {
+                    $relation->addPreConstraints($this);
+
+                    $obj = $relation->getRelated()->newDescriptor();
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+        else
+        {
+            $relation = $this->getRelation($name);
+
+            if ($relation instanceof ComesWithMany)
+            {
+                $relation->addPreConstraints($this);
+            }
         }
     }
 
@@ -404,6 +451,18 @@ abstract class BaseDescriptor implements Descriptor
         return $this->model;
     }
 
+    public function getEndpoint()
+    {
+        return $this->endpoint;
+    }
+
+    public function setEndpoint($value)
+    {
+        $this->endpoint = $value;
+
+        return $this;
+    }
+
     protected function getQuery()
     {
         return $this->query;
@@ -440,9 +499,9 @@ abstract class BaseDescriptor implements Descriptor
         return "{$this->endpoint}/{$id}";
     }
 
-    protected function getManyEndpoint($id = [])
+    protected function getManyEndpoint()
     {
-        return "{$this->endpoint}";
+        return $this->endpoint;
     }
 
     protected function processOneResponse(ResponseInterface $response)
