@@ -79,6 +79,8 @@ abstract class BaseDescriptor implements Descriptor
                 }
             }
 
+            $body = json_decode($response->getBody()->getContents());
+
             throw new \Exception();
         });
     }
@@ -444,6 +446,16 @@ abstract class BaseDescriptor implements Descriptor
     public function first()
     {
         return $this->take(1)->get()->first();
+    }
+
+    public function firstOrFail()
+    {
+        if($model = $this->first())
+        {
+            return $model;
+        }
+
+        throw (new ModelNotFoundException())->setModel(get_class($this->model));
     }
 
     public function getModel()

@@ -61,7 +61,7 @@ class Client
 
         $ref = $this->getNextReference();
 
-        $this->startLog($ref, $endpoint, $name, data_get($options, 'json', data_get($options, 'body')));
+        $this->startLog($ref, $endpoint, $verb, $name, data_get($options, 'json', data_get($options, 'body')));
 
         return $this->pending[$name][$ref] = $this->connection->{"{$verb}Async"}($endpoint, $options + ['query' => $this->getQuery(), 'headers' => $this->getHeaders()])
             ->then(
@@ -149,13 +149,14 @@ class Client
     /**
      * @param $ref
      * @param $endpoint
+     * @param $verb
      * @param string $method
      * @param string|array|null $body
      */
-    protected function startLog($ref, $endpoint, $method, $body = null)
+    protected function startLog($ref, $endpoint, $verb, $method, $body = null)
     {
         static::$log[$ref] = array_filter([
-            'method' => $method,
+            'method' => $verb,
             'url' => $this->connection->getConfig('base_uri') . "$endpoint",
             'query' => $this->getQuery(),
             'headers' => $this->getHeaders(),

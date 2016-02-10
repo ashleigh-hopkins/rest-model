@@ -57,6 +57,17 @@ interface Descriptor
     function findOrFail($id);
 
     /**
+     * @return Model
+     */
+    function first();
+
+    /**
+     * @return Model
+     * @throws ModelNotFoundException
+     */
+    function firstOrFail();
+
+    /**
      * @param $relations
      * @return static
      */
