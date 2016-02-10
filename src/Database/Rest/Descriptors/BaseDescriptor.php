@@ -81,7 +81,7 @@ abstract class BaseDescriptor implements Descriptor
 
             $body = json_decode($response->getBody()->getContents());
 
-            throw new \Exception();
+            throw $exception;
         });
     }
 
@@ -200,17 +200,35 @@ abstract class BaseDescriptor implements Descriptor
         return \GuzzleHttp\Promise\promise_for($this->processManyOneResponse($items));
     }
 
-    public function where($key, $value = null)
+    public function where($key, $operator = null, $value = null)
     {
-        if(is_array($key) == false)
-        {
-            $key = [$key => $value];
+        // If the column is an array, we will assume it is an array of key-value pairs
+        // and can add them each as a where clause. We will maintain the boolean we
+        // received when the method was called and pass it into the nested where.
+        if (is_array($key)) {
+            foreach($key as $k) {
+                call_user_func_array([$this, 'where'], $k);
+            }
         }
 
-        foreach($key as $k => $v)
-        {
-            $this->query[$k] = $v;
+        // Here we will make some assumptions about the operator. If only 2 values are
+        // passed to the method, we will assume that the operator is an equals sign
+        // and keep going. Otherwise, we'll require the operator to be passed in.
+        if (func_num_args() == 2) {
+            list($value, $operator) = [$operator, '='];
         }
+
+        if($operator == null)
+        {
+            return $this;
+        }
+
+        return $this->addWhere($key, $operator, $value);
+    }
+
+    protected function addWhere($key, $operator, $value)
+    {
+        $this->query[$key] = $value;
 
         return $this;
     }
@@ -244,15 +262,24 @@ abstract class BaseDescriptor implements Descriptor
 
     public function get()
     {
+        return $this->getAsync()->wait();
+    }
+
+    /**
+     * @return PromiseInterface
+     */
+    public function getAsync()
+    {
         $this->loadPreRelations();
 
-        $models = $this->getMany();
+        return $this->getManyAsync()->then(function($models)
+        {
+            if (count($models) > 0) {
+                $models = $this->eagerLoadRelations($models);
+            }
 
-        if (count($models) > 0) {
-            $models = $this->eagerLoadRelations($models);
-        }
-
-        return $this->getModel()->newCollection($models);
+            return $this->getModel()->newCollection($models);
+        });
     }
 
     public function eagerLoadRelations(array $models)
@@ -426,7 +453,16 @@ abstract class BaseDescriptor implements Descriptor
 
     public function find($id)
     {
-        return $this->where($this->model->getKeyName(), $id)->first();
+        return $this->findAsync($id)->wait();
+    }
+
+    /**
+     * @param $id
+     * @return PromiseInterface
+     */
+    public function findAsync($id)
+    {
+        return $this->where($this->model->getKeyName(), $id)->firstAsync();
     }
 
     /**
@@ -435,27 +471,61 @@ abstract class BaseDescriptor implements Descriptor
      */
     public function findOrFail($id)
     {
-        if($model = $this->find($id))
-        {
-            return $model;
-        }
+        return $this->findOrFailAsync($id)->wait();
+    }
 
-        throw (new ModelNotFoundException())->setModel(get_class($this->model));
+    /**
+     * @param $id
+     * @return PromiseInterface
+     */
+    public function findOrFailAsync($id)
+    {
+        return $this->findAsync($id)->then(function($model)
+        {
+            if($model)
+            {
+                return $model;
+            }
+
+            throw (new ModelNotFoundException())->setModel(get_class($this->model));
+        });
     }
 
     public function first()
     {
-        return $this->take(1)->get()->first();
+        return $this->firstAsync()->wait();
+    }
+
+    /**
+     * @return PromiseInterface
+     */
+    public function firstAsync()
+    {
+        return $this->take(1)->getAsync()->then(function($result)
+        {
+            return $result->first();
+        });
     }
 
     public function firstOrFail()
     {
-        if($model = $this->first())
-        {
-            return $model;
-        }
+        return $this->firstOrFailAsync()->wait();
+    }
 
-        throw (new ModelNotFoundException())->setModel(get_class($this->model));
+    /**
+     * @return PromiseInterface
+     */
+    public function firstOrFailAsync()
+    {
+        return $this->firstAsync()->then(function($model)
+        {
+            if($model)
+            {
+                return $model;
+            }
+
+            throw (new ModelNotFoundException())->setModel(get_class($this->model));
+        });
     }
 
     public function getModel()
