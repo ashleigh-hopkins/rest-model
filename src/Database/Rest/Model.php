@@ -112,29 +112,48 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return $instance->newCollection($items);
     }
 
-    public static function create(array $attributes = [])
+    public static function createAsync(array $attributes = [])
     {
         $model = new static($attributes);
 
-        $model->save();
+        return $model->saveAsync()->then(function($result) use($model) {
+            return $model;
+        });
+    }
 
-        return $model;
+    public static function create(array $attributes = [])
+    {
+        return static::createAsync($attributes)->wait();
+    }
+
+    public static function allAsync()
+    {
+        $instance = new static;
+
+        return $instance->newDescriptor()->getAsync();
     }
 
     public static function all()
     {
-        $instance = new static;
+        return static::allAsync()->wait();
+    }
 
-        return $instance->newDescriptor()->get();
+    public static function findOrNewAsync($id)
+    {
+        return static::findAsync($id)->then(function($result) {
+            
+            if(! is_null($result))
+            {
+                return $result;
+            }
+            
+            return new static;
+        });
     }
 
     public static function findOrNew($id)
     {
-        if (! is_null($model = static::find($id))) {
-            return $model;
-        }
-
-        return new static;
+        return static::findOrNewAsync($id)->wait();
     }
 
     /**
@@ -151,33 +170,47 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return $instance->newDescriptor()->find($this->getKey());
     }
 
-    public static function destroy($ids)
+    public static function destroyAsync($ids)
     {
         // We'll initialize a count here so we will return the total number of deletes
         // for the operation. The developers can then check this number as a boolean
         // type value or get this total count of records deleted for logging, etc.
-        $count = 0;
 
         $ids = is_array($ids) ? $ids : func_get_args();
-
-        $instance = new static;
 
         // We will actually pull the models from the database table and call delete on
         // each of them individually so that their events get fired properly with a
         // correct set of attributes in case the developers wants to check these.
 
+        $tasks = [];
+
         foreach ($ids as $id)
         {
             if($model = static::find($id))
             {
-                if ($model->delete())
+                $tasks[] = $model->deleteAsync($id);
+            }
+        }
+
+        return \GuzzleHttp\Promise\all($tasks)->then(function($results) {
+
+            $count = 0;
+
+            foreach ($results as $result)
+            {
+                if($result)
                 {
                     $count++;
                 }
             }
-        }
 
-        return $count;
+            return $count;
+        });
+    }
+
+    public static function destroy($ids)
+    {
+        return static::destroyAsync($ids)->wait();
     }
 
     public function load($relations)
@@ -202,7 +235,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return $instance->newDescriptor()->with($relations);
     }
 
-    public function delete()
+    public function deleteAsync()
     {
         if (is_null($this->getKeyName())) {
             throw new Exception('No primary key defined on model.');
@@ -212,25 +245,37 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
 
             $descriptor = $this->newDescriptor();
 
-            $this->performDeleteOnModel($descriptor);
+            return $this->performDeleteOnModel($descriptor)->then(function($result) {
+                $this->exists = false;
 
-            $this->exists = false;
-
-            return true;
+                return true;
+            });
         }
+
+        return \GuzzleHttp\Promise\promise_for(true);
+    }
+
+    public function delete()
+    {
+        return $this->deleteAsync()->wait();
     }
 
     protected function performDeleteOnModel(Descriptor $descriptor)
     {
-        $descriptor->deleteOne($this->getKey());
+        return $descriptor->deleteOneAsync($this->getKey());
+    }
+
+    public function updateAsync(array $attributes = [])
+    {
+        return $this->fill($attributes)->saveAsync();
     }
 
     public function update(array $attributes = [])
     {
-        return $this->fill($attributes)->save();
+        return $this->updateAsync($attributes)->wait();
     }
 
-    public function save()
+    public function saveAsync()
     {
         $descriptor = $this->newDescriptor();
 
@@ -248,11 +293,19 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
             $saved = $this->performInsert($descriptor);
         }
 
-        if ($saved) {
-            $this->finishSave();
-        }
+        $saved->then(function($result) {
+            if($result)
+            {
+                $this->finishSave();
+            }
+        });
 
         return $saved;
+    }
+    
+    public function save()
+    {
+        return $this->saveAsync()->wait();
     }
 
     protected function finishSave()
@@ -266,12 +319,15 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
 
         if (count($dirty) > 0)
         {
-            $object = $descriptor->updateOne($this->getKey(), $dirty);
+            return $descriptor->updateOneAsync($this->getKey(), $dirty)->then(function($result) {
 
-            $this->fill($object->toArray());
+                $this->fill($result->toArray());
+
+                return true;
+            });
         }
 
-        return true;
+        return \GuzzleHttp\Promise\promise_for(true);
     }
 
     protected function performInsert(Descriptor $descriptor)
@@ -281,18 +337,18 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         // table from the database. Not all tables have to be incrementing though.
         $attributes = $this->attributes;
 
-        $object = $descriptor->storeOne($attributes);
+        return $descriptor->storeOneAsync($attributes)->then(function($result) {
+            $this->fill($result->toArray());
 
-        $this->fill($object->toArray());
+            // We will go ahead and set the exists property to true, so that it is set when
+            // the created event is fired, just in case the developer tries to update it
+            // during the event. This will allow them to do so and run an update here.
+            $this->exists = true;
 
-        // We will go ahead and set the exists property to true, so that it is set when
-        // the created event is fired, just in case the developer tries to update it
-        // during the event. This will allow them to do so and run an update here.
-        $this->exists = true;
+            $this->wasRecentlyCreated = true;
 
-        $this->wasRecentlyCreated = true;
-
-        return true;
+            return true;
+        });
     }
 
     /**
