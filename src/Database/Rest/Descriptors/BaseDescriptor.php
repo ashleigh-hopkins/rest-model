@@ -122,6 +122,8 @@ abstract class BaseDescriptor implements Descriptor
         {
             $result = $this->processOneResponse($response);
 
+            $result = $this->postProcessStoreOne($result);
+
             return $this->returnOne($result);
         });
     }
@@ -135,9 +137,11 @@ abstract class BaseDescriptor implements Descriptor
     {
         $endpoint = $this->getOneEndpoint($id);
 
-        return $this->clientCallAsync('put', $endpoint, ['json' => $attributes], function($response)
+        return $this->clientCallAsync(array_get($this->config, 'update_verb', 'put'), $endpoint, ['json' => $attributes], function($response)
         {
             $result = $this->processOneResponse($response);
+            
+            $result = $this->postProcessUpdateOne($result);
 
             return $this->returnOne($result);
         });
@@ -593,6 +597,16 @@ abstract class BaseDescriptor implements Descriptor
         $body = $this->getJsonFromResponse($response);
 
         return $this->getOneResponseAccessor($body);
+    }
+    
+    protected function postProcessStoreOne($data)
+    {
+        return $data;
+    }
+    
+    protected function postProcessUpdateOne($data)
+    {
+        return $data;
     }
 
     protected function processDeleteOneResponse(ResponseInterface $response)
