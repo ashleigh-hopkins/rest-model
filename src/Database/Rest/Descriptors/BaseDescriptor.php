@@ -71,15 +71,13 @@ abstract class BaseDescriptor implements Descriptor
         {
             $response = $exception->getResponse();
 
-            switch($response->getStatusCode())
-            {
-                case Response::HTTP_UNPROCESSABLE_ENTITY:
-                {
-                    throw new RestRemoteValidationException(json_decode($response->getBody()->getContents())->error, $response->getStatusCode());
+            if($response !== null) {
+                switch ($response->getStatusCode()) {
+                    case Response::HTTP_UNPROCESSABLE_ENTITY: {
+                        throw new RestRemoteValidationException(json_decode($response->getBody()->getContents())->error, $response->getStatusCode());
+                    }
                 }
             }
-
-            $body = json_decode($response->getBody()->getContents());
 
             throw $exception;
         });

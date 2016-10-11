@@ -172,11 +172,11 @@ class Client
     protected function endLog($ref, $response = null)
     {
         static::$log[$ref]['time'] = round((microtime(true) - static::$log[$ref]['time']) * 1000, 2);
-        static::$log[$ref]['status'] = $response->getStatusCode();
+        static::$log[$ref]['status'] = $response ? $response->getStatusCode() : -1;
     }
 
     /**
-     * @return array
+     * @return int
      */
     protected function getNextReference()
     {
