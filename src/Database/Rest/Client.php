@@ -29,10 +29,14 @@ class Client
         $this->connection = $connection;
     }
 
+    public static function getRequestLog()
+    {
+        return static::$log;
+    }
+
     public function clientCall($verb, $endpoint, $options = [], $name = null)
     {
-        if($name === null)
-        {
+        if ($name === null) {
             list(, $caller) = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
 
             $name = $caller['function'];
@@ -52,8 +56,7 @@ class Client
      */
     public function clientCallAsync($verb, $endpoint, $options = [], callable $successCallback = null, callable $failureCallback = null, $name = null)
     {
-        if($name === null)
-        {
+        if ($name === null) {
             list(, $caller) = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
 
             $name = $caller['function'];
@@ -65,85 +68,38 @@ class Client
 
         return $this->pending[$name][$ref] = $this->connection->{"{$verb}Async"}($endpoint, $options + ['query' => $this->getQuery(), 'headers' => $this->getHeaders()])
             ->then(
-            function($response) use($name, $ref, $successCallback)
-            {
-                $this->endLog($ref, $response);
+                function($response) use ($name, $ref, $successCallback) {
+                    $this->endLog($ref, $response);
 
-                unset($this->pending[$name][$ref]);
+                    unset($this->pending[$name][$ref]);
 
-                if($successCallback !== null)
-                {
-                    return $successCallback($response);
-                }
+                    if ($successCallback !== null) {
+                        return $successCallback($response);
+                    }
 
-                return $response;
-            },
-            function($exception) use($name, $ref, $failureCallback)
-            {
-                $response = $exception->getResponse();
+                    return $response;
+                },
+                function($exception) use ($name, $ref, $failureCallback) {
+                    $response = $exception->getResponse();
 
-                $this->endLog($ref, $response);
+                    $this->endLog($ref, $response);
 
-                unset($this->pending[$name][$ref]);
+                    unset($this->pending[$name][$ref]);
 
-                if($failureCallback !== null)
-                {
-                    return $failureCallback($exception);
-                }
+                    if ($failureCallback !== null) {
+                        return $failureCallback($exception);
+                    }
 
-                return null;
-            });
-    }
-
-    public function query($key, $value = null)
-    {
-        if(is_array($key) == false)
-        {
-            $key = [$key => $value];
-        }
-
-        foreach($key as $k => $v)
-        {
-            $this->query[$k] = $v;
-        }
-
-        return $this;
-    }
-
-    public function header($key, $value = null)
-    {
-        if(is_array($key) == false)
-        {
-            $key = [$key => $value];
-        }
-
-        foreach($key as $k => $v)
-        {
-            $this->headers[$k] = $v;
-        }
-
-        return $this;
+                    return null;
+                });
     }
 
     /**
-     * @return array
+     * @return int
      */
-    private function getQuery()
+    protected function getNextReference()
     {
-        return ($this->connection->getConfig('query') ?: []) + $this->query;
-    }
-
-    /**
-     * @return array
-     */
-    private function getHeaders()
-    {
-        return ($this->connection->getConfig('headers') ?: []) + $this->headers;
-    }
-
-    public static function getRequestLog()
-    {
-        return static::$log;
+        return static::$requestReference++;
     }
 
     /**
@@ -166,6 +122,22 @@ class Client
     }
 
     /**
+     * @return array
+     */
+    private function getQuery()
+    {
+        return ($this->connection->getConfig('query') ?: []) + $this->query;
+    }
+
+    /**
+     * @return array
+     */
+    private function getHeaders()
+    {
+        return ($this->connection->getConfig('headers') ?: []) + $this->headers;
+    }
+
+    /**
      * @param int $ref
      * @param ResponseInterface|null $response
      */
@@ -175,11 +147,29 @@ class Client
         static::$log[$ref]['status'] = $response ? $response->getStatusCode() : -1;
     }
 
-    /**
-     * @return int
-     */
-    protected function getNextReference()
+    public function query($key, $value = null)
     {
-        return static::$requestReference++;
+        if (is_array($key) == false) {
+            $key = [$key => $value];
+        }
+
+        foreach ($key as $k => $v) {
+            $this->query[$k] = $v;
+        }
+
+        return $this;
+    }
+
+    public function header($key, $value = null)
+    {
+        if (is_array($key) == false) {
+            $key = [$key => $value];
+        }
+
+        foreach ($key as $k => $v) {
+            $this->headers[$k] = $v;
+        }
+
+        return $this;
     }
 }

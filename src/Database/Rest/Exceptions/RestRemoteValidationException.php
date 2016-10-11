@@ -10,7 +10,7 @@ class RestRemoteValidationException extends Exception
 
     public function __construct($errorObject, $httpCode)
     {
-        parent::__construct("Remote validation exception [{$httpCode}]: ".json_encode($errorObject));
+        parent::__construct("Remote validation exception [{$httpCode}]: " . json_encode($errorObject));
 
         $this->errorObject = $errorObject;
         $this->httpCode = $httpCode;

@@ -2,7 +2,6 @@
 
 use ArrayAccess;
 use Carbon\Carbon;
-use RestModel\Database\Rest\Descriptors\Contracts\Descriptor;
 use DateTime;
 use Exception;
 use Illuminate\Contracts\Queue\QueueableEntity;
@@ -12,46 +11,39 @@ use Illuminate\Contracts\Support\Jsonable;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
 use JsonSerializable;
+use RestModel\Database\Rest\Descriptors\Contracts\Descriptor;
 
 abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializable, QueueableEntity, UrlRoutable
 {
-    protected $primaryKey = 'id';
-
-    protected $attributes = [];
-
-    protected $original = [];
-
-    protected $relations = [];
-
-    protected $dates = [];
-
-    protected $dateFormat;
-
-    protected $connection;
-
-    protected $endpoint;
-
-    protected $casts = [];
-
-    protected $wasRecentlyCreated;
-
-    public $exists = false;
-
-    public $incrementing = true;
-
-    protected $with = [];
-
-    protected static $cachedDescriptors;
-
     public static $snakeAttributes = true;
-
     public static $resolver = null;
+    protected static $cachedDescriptors;
+    public $exists = false;
+    public $incrementing = true;
+    protected $primaryKey = 'id';
+    protected $attributes = [];
+    protected $original = [];
+    protected $relations = [];
+    protected $dates = [];
+    protected $dateFormat;
+    protected $connection;
+    protected $endpoint;
+    protected $casts = [];
+    protected $wasRecentlyCreated;
+    protected $with = [];
 
     public function __construct(array $attributes = [])
     {
         $this->syncOriginal();
 
         $this->fill($attributes);
+    }
+
+    public function syncOriginal()
+    {
+        $this->original = $this->attributes;
+
+        return $this;
     }
 
     public function fill(array $attributes)
@@ -63,32 +55,135 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return $this;
     }
 
-    public function newInstance($attributes = [], $exists = false)
+    public function setAttribute($key, $value)
     {
-        // This method just provides a convenient way for us to generate fresh model
-        // instances of this current model. It is particularly useful during the
-        // hydration of new objects via the Eloquent query builder instances.
-        $model = new static((array) $attributes);
+        // If an attribute is listed as a "date", we'll convert it from a DateTime
+        // instance into a form proper for storage on the database tables using
+        // the connection grammar's date format. We will auto set the values.
+        if ($value && (in_array($key, $this->getDates()) || $this->isDateCastable($key))) {
+            $value = $this->fromDateTime($value);
+        }
 
-        $model->exists = $exists;
+        if ($this->isJsonCastable($key) && !is_null($value)) {
+            $value = $this->asJson($value);
+        }
 
-        return $model;
+        $this->attributes[$key] = $value;
+
+        return $this;
+    }
+
+    public function getDates()
+    {
+        return $this->dates ?: [];
+    }
+
+    protected function isDateCastable($key)
+    {
+        return $this->hasCast($key, ['date', 'datetime']);
+    }
+
+    public function hasCast($key, $types = null)
+    {
+        if (array_key_exists($key, $this->getCasts())) {
+            return $types ? in_array($this->getCastType($key), (array)$types, true) : true;
+        }
+
+        return false;
+    }
+
+    public function getCasts()
+    {
+        if ($this->incrementing) {
+            return array_merge([
+                $this->getKeyName() => 'int',
+            ], $this->casts);
+        }
+
+        return $this->casts;
+    }
+
+    public function getKeyName()
+    {
+        return $this->primaryKey;
+    }
+
+    protected function getCastType($key)
+    {
+        return trim(strtolower($this->getCasts()[$key]));
+    }
+
+    public function fromDateTime($value)
+    {
+        $format = $this->getDateFormat();
+
+        $value = $this->asDateTime($value);
+
+        return $value->format($format);
+    }
+
+    protected function getDateFormat()
+    {
+        return $this->dateFormat ?: 'c';
+    }
+
+    public function setDateFormat($format)
+    {
+        $this->dateFormat = $format;
+
+        return $this;
     }
 
     /**
-     * @param array $attributes
-     * @param string|null $connection
-     * @return static
+     * Return a timestamp as DateTime object.
+     *
+     * @param  mixed $value
+     * @return \Carbon\Carbon
      */
-    public function newFromDescriptor($attributes = [], $connection = null)
+    protected function asDateTime($value)
     {
-        $model = $this->newInstance([], true);
+        // If this value is already a Carbon instance, we shall just return it as is.
+        // This prevents us having to reinstantiate a Carbon instance when we know
+        // it already is one, which wouldn't be fulfilled by the DateTime check.
+        if ($value instanceof Carbon) {
+            return $value;
+        }
 
-        $model->setRawAttributes((array) $attributes, true);
+        // If the value is already a DateTime instance, we will just skip the rest of
+        // these checks since they will be a waste of time, and hinder performance
+        // when checking the field. We will just return the DateTime right away.
+        if ($value instanceof DateTime) {
+            return Carbon::instance($value);
+        }
 
-        //$model->setConnection($connection ?: $this->connection);
+        // If this value is an integer, we will assume it is a UNIX timestamp's value
+        // and format a Carbon object from this timestamp. This allows flexibility
+        // when defining your date fields as they might be UNIX timestamps here.
+        if (is_numeric($value)) {
+            return Carbon::createFromTimestamp($value);
+        }
 
-        return $model;
+        // If the value is in simply year, month, day format, we will instantiate the
+        // Carbon instances from that format. Again, this provides for simple date
+        // fields on the database, while still supporting Carbonized conversion.
+        if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $value)) {
+            return Carbon::createFromFormat('Y-m-d', $value)->startOfDay();
+        }
+
+        // Finally, we will just assume this date is in the format used by default on
+        // the database connection and use that format to create the Carbon object
+        // that is returned back out to the developers after we convert it here.
+        return Carbon::createFromFormat($this->getDateFormat(), $value);
+    }
+
+    protected function isJsonCastable($key)
+    {
+        return $this->hasCast($key, ['array', 'json', 'object', 'collection']);
+    }
+
+    protected function asJson($value)
+    {
+        return json_encode($value);
     }
 
     /**
@@ -100,25 +195,22 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
     {
         $instance = (new static)->setConnection($connection);
 
-        if($items == null)
-        {
+        if ($items == null) {
             return $instance->newCollection([]);
         }
 
-        $items = array_map(function ($item) use ($instance) {
+        $items = array_map(function($item) use ($instance) {
             return $instance->newFromDescriptor($item, null);
         }, $items);
 
         return $instance->newCollection($items);
     }
 
-    public static function createAsync(array $attributes = [])
+    public function setConnection($name)
     {
-        $model = new static($attributes);
+        $this->connection = $name;
 
-        return $model->saveAsync()->then(function($result) use($model) {
-            return $model;
-        });
+        return $this;
     }
 
     public static function create(array $attributes = [])
@@ -126,153 +218,13 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return static::createAsync($attributes)->wait();
     }
 
-    public static function allAsync()
+    public static function createAsync(array $attributes = [])
     {
-        $instance = new static;
+        $model = new static($attributes);
 
-        return $instance->newDescriptor()->getAsync();
-    }
-
-    public static function all()
-    {
-        return static::allAsync()->wait();
-    }
-
-    public static function findOrNewAsync($id)
-    {
-        return static::findAsync($id)->then(function($result) {
-            
-            if(! is_null($result))
-            {
-                return $result;
-            }
-            
-            return new static;
+        return $model->saveAsync()->then(function($result) use ($model) {
+            return $model;
         });
-    }
-
-    public static function findOrNew($id)
-    {
-        return static::findOrNewAsync($id)->wait();
-    }
-
-    /**
-     * @return static
-     */
-    public function fresh()
-    {
-        if (! $this->exists) {
-            return null;
-        }
-
-        $instance = new static;
-
-        return $instance->newDescriptor()->find($this->getKey());
-    }
-
-    public static function destroyAsync($ids)
-    {
-        // We'll initialize a count here so we will return the total number of deletes
-        // for the operation. The developers can then check this number as a boolean
-        // type value or get this total count of records deleted for logging, etc.
-
-        $ids = is_array($ids) ? $ids : func_get_args();
-
-        // We will actually pull the models from the database table and call delete on
-        // each of them individually so that their events get fired properly with a
-        // correct set of attributes in case the developers wants to check these.
-
-        $tasks = [];
-
-        foreach ($ids as $id)
-        {
-            if($model = static::find($id))
-            {
-                $tasks[] = $model->deleteAsync($id);
-            }
-        }
-
-        return \GuzzleHttp\Promise\all($tasks)->then(function($results) {
-
-            $count = 0;
-
-            foreach ($results as $result)
-            {
-                if($result)
-                {
-                    $count++;
-                }
-            }
-
-            return $count;
-        });
-    }
-
-    public static function destroy($ids)
-    {
-        return static::destroyAsync($ids)->wait();
-    }
-
-    public function load($relations)
-    {
-        if (is_string($relations)) {
-            $relations = func_get_args();
-        }
-
-        $descriptor = $this->newDescriptor()->with($relations);
-
-        $descriptor->eagerLoadRelations([$this]);
-
-        return $this;
-    }
-
-    public static function with($relations)
-    {
-        $relations = is_array($relations) ? $relations : func_get_args();
-
-        $instance = new static;
-
-        return $instance->newDescriptor()->with($relations);
-    }
-
-    public function deleteAsync()
-    {
-        if (is_null($this->getKeyName())) {
-            throw new Exception('No primary key defined on model.');
-        }
-
-        if ($this->exists) {
-
-            $descriptor = $this->newDescriptor();
-
-            return $this->performDeleteOnModel($descriptor)->then(function($result) {
-                $this->exists = false;
-
-                return true;
-            });
-        }
-
-        return \GuzzleHttp\Promise\promise_for(true);
-    }
-
-    public function delete()
-    {
-        return $this->deleteAsync()->wait();
-    }
-
-    protected function performDeleteOnModel(Descriptor $descriptor)
-    {
-        return $descriptor->deleteOneAsync($this->getKey());
-    }
-
-    public function updateAsync(array $attributes = [])
-    {
-        return $this->fill($attributes)->saveAsync();
-    }
-
-    public function update(array $attributes = [])
-    {
-        return $this->updateAsync($attributes)->wait();
     }
 
     public function saveAsync()
@@ -294,31 +246,46 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         }
 
         $saved->then(function($result) {
-            if($result)
-            {
+            if ($result) {
                 $this->finishSave();
             }
         });
 
         return $saved;
     }
-    
-    public function save()
+
+    /**
+     * @return Descriptor
+     */
+    public function newDescriptor()
     {
-        return $this->saveAsync()->wait();
+        if ($this->connection === null) {
+            $this->connection = \Config::get('rest.default');
+        }
+
+        return $this->getDescriptor()->with($this->with);
     }
 
-    protected function finishSave()
+    /**
+     * @return Descriptor
+     * @throws Exception
+     */
+    public function getDescriptor()
     {
-        $this->syncOriginal();
+        $config = config("rest.connections.{$this->connection}");
+
+        if ($config !== null) {
+            return app(array_get($config, 'descriptor'), [$this->connection, $this, $config]);
+        }
+
+        throw new Exception("Missing config for rest connection [{$this->connection}]");
     }
 
     protected function performUpdate(Descriptor $descriptor)
     {
         $dirty = $this->getDirty();
 
-        if (count($dirty) > 0)
-        {
+        if (count($dirty) > 0) {
             return $descriptor->updateOneAsync($this->getKey(), $dirty)->then(function($result) {
 
                 $this->fill($result->toArray());
@@ -328,6 +295,167 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         }
 
         return \GuzzleHttp\Promise\promise_for(true);
+    }
+
+    public function getDirty()
+    {
+        $dirty = [];
+
+        foreach ($this->attributes as $key => $value) {
+            if (!array_key_exists($key, $this->original)) {
+                $dirty[$key] = $value;
+            } elseif ($value !== $this->original[$key] &&
+                !$this->originalIsNumericallyEquivalent($key)
+            ) {
+                $dirty[$key] = $value;
+            }
+        }
+
+        return $dirty;
+    }
+
+    protected function originalIsNumericallyEquivalent($key)
+    {
+        $current = $this->attributes[$key];
+
+        $original = $this->original[$key];
+
+        return is_numeric($current) && is_numeric($original) && strcmp((string)$current, (string)$original) === 0;
+    }
+
+    public function getKey()
+    {
+        $keyName = $this->getKeyName();
+
+        if (is_array($keyName)) {
+            $result = [];
+
+            foreach ($keyName as $k) {
+                $result[$k] = $this->getAttribute($k);
+            }
+
+            return $result;
+        }
+
+        return $this->getAttribute($this->getKeyName());
+    }
+
+    public function getAttribute($key)
+    {
+        if (array_key_exists($key, $this->attributes)) {
+            return $this->getAttributeValue($key);
+        }
+
+        return $this->getRelationValue($key);
+    }
+
+    public function getAttributeValue($key)
+    {
+        $value = $this->getAttributeFromArray($key);
+
+        // If the attribute exists within the cast array, we will convert it to
+        // an appropriate native PHP type dependant upon the associated value
+        // given with the key in the pair. Dayle made this comment line up.
+        if ($this->hasCast($key)) {
+            $value = $this->castAttribute($key, $value);
+        }
+
+        // If the attribute is listed as a date, we will convert it to a DateTime
+        // instance on retrieval, which makes it quite convenient to work with
+        // date fields without having to create a mutator for each property.
+        elseif (in_array($key, $this->getDates())) {
+            if (!is_null($value)) {
+                return $this->asDateTime($value);
+            }
+        }
+
+        return $value;
+    }
+
+    protected function getAttributeFromArray($key)
+    {
+        if (array_key_exists($key, $this->attributes)) {
+            return $this->attributes[$key];
+        }
+
+        return null;
+    }
+
+    protected function castAttribute($key, $value)
+    {
+        if (is_null($value)) {
+            return $value;
+        }
+
+        switch ($this->getCastType($key)) {
+            case 'int':
+            case 'integer':
+                return (int)$value;
+            case 'real':
+            case 'float':
+            case 'double':
+                return (float)$value;
+            case 'string':
+                return (string)$value;
+            case 'bool':
+            case 'boolean':
+                return (bool)$value;
+            case 'object':
+                return $this->fromJson($value, true);
+            case 'array':
+            case 'json':
+                return $this->fromJson($value);
+            case 'collection':
+                return new BaseCollection($this->fromJson($value));
+            case 'date':
+            case 'datetime':
+                return $this->asDateTime($value);
+            case 'timestamp':
+                return $this->asTimeStamp($value);
+            default:
+                return $value;
+        }
+    }
+
+    public function fromJson($value, $asObject = false)
+    {
+        return json_decode($value, !$asObject);
+    }
+
+    protected function asTimeStamp($value)
+    {
+        return (int)$this->asDateTime($value)->timestamp;
+    }
+
+    public function getRelationValue($key)
+    {
+        // If the key already exists in the relationships array, it just means the
+        // relationship has already been loaded, so we'll just return it out of
+        // here because there is no need to query within the relations twice.
+        if ($this->relationLoaded($key)) {
+            return $this->relations[$key];
+        }
+
+        // If the "attribute" exists as a method on the model, we will just assume
+        // it is a relationship and will load and return results from the query
+        // and hydrate the relationship's value on the "relationships" array.
+        if (method_exists($this, $key)) {
+            return $this->getRelationshipFromMethod($key);
+        }
+
+        return null;
+    }
+
+    public function relationLoaded($key)
+    {
+        return array_key_exists($key, $this->relations);
+    }
+
+    protected function getRelationshipFromMethod($method)
+    {
+        $relations = $this->$method();
+
+        return $this->relations[$method] = $relations->getResults();
     }
 
     protected function performInsert(Descriptor $descriptor)
@@ -351,33 +479,204 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         });
     }
 
-    /**
-     * @return Descriptor
-     */
-    public function newDescriptor()
+    protected function finishSave()
     {
-        if($this->connection === null)
-        {
-            $this->connection = \Config::get('rest.default');
+        $this->syncOriginal();
+    }
+
+    public static function all()
+    {
+        return static::allAsync()->wait();
+    }
+
+    public static function allAsync()
+    {
+        $instance = new static;
+
+        return $instance->newDescriptor()->getAsync();
+    }
+
+    public static function findOrNew($id)
+    {
+        return static::findOrNewAsync($id)->wait();
+    }
+
+    public static function findOrNewAsync($id)
+    {
+        return static::findAsync($id)->then(function($result) {
+
+            if (!is_null($result)) {
+                return $result;
+            }
+
+            return new static;
+        });
+    }
+
+    public static function destroy($ids)
+    {
+        return static::destroyAsync($ids)->wait();
+    }
+
+    public static function destroyAsync($ids)
+    {
+        // We'll initialize a count here so we will return the total number of deletes
+        // for the operation. The developers can then check this number as a boolean
+        // type value or get this total count of records deleted for logging, etc.
+
+        $ids = is_array($ids) ? $ids : func_get_args();
+
+        // We will actually pull the models from the database table and call delete on
+        // each of them individually so that their events get fired properly with a
+        // correct set of attributes in case the developers wants to check these.
+
+        $tasks = [];
+
+        foreach ($ids as $id) {
+            if ($model = static::find($id)) {
+                $tasks[] = $model->deleteAsync($id);
+            }
         }
 
-        return $this->getDescriptor()->with($this->with);
+        return \GuzzleHttp\Promise\all($tasks)->then(function($results) {
+
+            $count = 0;
+
+            foreach ($results as $result) {
+                if ($result) {
+                    $count++;
+                }
+            }
+
+            return $count;
+        });
+    }
+
+    public static function with($relations)
+    {
+        $relations = is_array($relations) ? $relations : func_get_args();
+
+        $instance = new static;
+
+        return $instance->newDescriptor()->with($relations);
+    }
+
+    public static function __callStatic($method, $parameters)
+    {
+        $instance = new static;
+
+        return call_user_func_array([$instance, $method], $parameters);
     }
 
     /**
-     * @return Descriptor
-     * @throws Exception
+     * @param array $attributes
+     * @param string|null $connection
+     * @return static
      */
-    public function getDescriptor()
+    public function newFromDescriptor($attributes = [], $connection = null)
     {
-        $config = config("rest.connections.{$this->connection}");
+        $model = $this->newInstance([], true);
 
-        if($config !== null)
-        {
-            return app(array_get($config, 'descriptor'), [$this->connection, $this, $config]);
+        $model->setRawAttributes((array)$attributes, true);
+
+        //$model->setConnection($connection ?: $this->connection);
+
+        return $model;
+    }
+
+    public function newInstance($attributes = [], $exists = false)
+    {
+        // This method just provides a convenient way for us to generate fresh model
+        // instances of this current model. It is particularly useful during the
+        // hydration of new objects via the Eloquent query builder instances.
+        $model = new static((array)$attributes);
+
+        $model->exists = $exists;
+
+        return $model;
+    }
+
+    public function setRawAttributes(array $attributes, $sync = false)
+    {
+        $this->attributes = $attributes;
+
+        if ($sync) {
+            $this->syncOriginal();
         }
 
-        throw new Exception("Missing config for rest connection [{$this->connection}]");
+        return $this;
+    }
+
+    /**
+     * @return static
+     */
+    public function fresh()
+    {
+        if (!$this->exists) {
+            return null;
+        }
+
+        $instance = new static;
+
+        return $instance->newDescriptor()->find($this->getKey());
+    }
+
+    public function load($relations)
+    {
+        if (is_string($relations)) {
+            $relations = func_get_args();
+        }
+
+        $descriptor = $this->newDescriptor()->with($relations);
+
+        $descriptor->eagerLoadRelations([$this]);
+
+        return $this;
+    }
+
+    public function delete()
+    {
+        return $this->deleteAsync()->wait();
+    }
+
+    public function deleteAsync()
+    {
+        if (is_null($this->getKeyName())) {
+            throw new Exception('No primary key defined on model.');
+        }
+
+        if ($this->exists) {
+
+            $descriptor = $this->newDescriptor();
+
+            return $this->performDeleteOnModel($descriptor)->then(function($result) {
+                $this->exists = false;
+
+                return true;
+            });
+        }
+
+        return \GuzzleHttp\Promise\promise_for(true);
+    }
+
+    protected function performDeleteOnModel(Descriptor $descriptor)
+    {
+        return $descriptor->deleteOneAsync($this->getKey());
+    }
+
+    public function update(array $attributes = [])
+    {
+        return $this->updateAsync($attributes)->wait();
+    }
+
+    public function updateAsync(array $attributes = [])
+    {
+        return $this->fill($attributes)->saveAsync();
+    }
+
+    public function save()
+    {
+        return $this->saveAsync()->wait();
     }
 
     public function newCollection(array $models = [])
@@ -394,32 +693,12 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return $this->endpoint = str_replace('\\', '', str_rest_url(Str::plural(class_basename($this))));
     }
 
-    public function getKey()
-    {
-        $keyName = $this->getKeyName();
-
-        if(is_array($keyName))
-        {
-            $result = [];
-
-            foreach($keyName as $k)
-            {
-                $result[$k] = $this->getAttribute($k);
-            }
-
-            return $result;
-        }
-
-        return $this->getAttribute($this->getKeyName());
-    }
-
     public function getKeyForStore()
     {
         $key = $this->getKey();
 
         // if it's an array then remove the last (current object) id off the end
-        if(is_array($key))
-        {
+        if (is_array($key)) {
             array_pop($key);
         }
 
@@ -429,11 +708,6 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
     public function getQueueableId()
     {
         return $this->getKey();
-    }
-
-    public function getKeyName()
-    {
-        return $this->primaryKey;
     }
 
     public function getRouteKey()
@@ -448,7 +722,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
 
     public function getForeignKey()
     {
-        return Str::snake(class_basename($this)).'_id';
+        return Str::snake(class_basename($this)) . '_id';
     }
 
     public function getIncrementing()
@@ -461,6 +735,119 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         $this->incrementing = $value;
 
         return $this;
+    }
+
+    public function getAttributes()
+    {
+        return $this->attributes;
+    }
+
+    public function getOriginal($key = null, $default = null)
+    {
+        return Arr::get($this->original, $key, $default);
+    }
+
+    public function syncOriginalAttribute($attribute)
+    {
+        $this->original[$attribute] = $this->attributes[$attribute];
+
+        return $this;
+    }
+
+    public function isDirty($attributes = null)
+    {
+        $dirty = $this->getDirty();
+
+        if (is_null($attributes)) {
+            return count($dirty) > 0;
+        }
+
+        if (!is_array($attributes)) {
+            $attributes = func_get_args();
+        }
+
+        foreach ($attributes as $attribute) {
+            if (array_key_exists($attribute, $dirty)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function getRelations()
+    {
+        return $this->relations;
+    }
+
+    public function setRelations(array $relations)
+    {
+        $this->relations = $relations;
+
+        return $this;
+    }
+
+    public function getRelation($relation)
+    {
+        return $this->relations[$relation];
+    }
+
+    public function setRelation($relation, $value)
+    {
+        $this->relations[$relation] = $value;
+
+        return $this;
+    }
+
+    public function getConnectionName()
+    {
+        return $this->connection;
+    }
+
+    public function __get($key)
+    {
+        return $this->getAttribute($key);
+    }
+
+    public function __set($key, $value)
+    {
+        $this->setAttribute($key, $value);
+    }
+
+    public function offsetExists($offset)
+    {
+        return isset($this->$offset);
+    }
+
+    public function offsetGet($offset)
+    {
+        return $this->$offset;
+    }
+
+    public function offsetSet($offset, $value)
+    {
+        $this->$offset = $value;
+    }
+
+    public function offsetUnset($offset)
+    {
+        unset($this->$offset);
+    }
+
+    public function __isset($key)
+    {
+        return (isset($this->attributes[$key]) || isset($this->relations[$key])) ||
+        (!is_null($this->getAttributeValue($key)));
+    }
+
+    public function __unset($key)
+    {
+        unset($this->attributes[$key], $this->relations[$key]);
+    }
+
+    public function __toString()
+    {
+        return $this->toJson();
     }
 
     public function toJson($options = 0)
@@ -488,7 +875,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         // to a DateTime / Carbon instance. This is so we will get some consistent
         // formatting while accessing attributes vs. arraying / JSONing a model.
         foreach ($this->getDates() as $key) {
-            if (! isset($attributes[$key])) {
+            if (!isset($attributes[$key])) {
                 continue;
             }
 
@@ -501,7 +888,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         // the values to their appropriate type. If the attribute has a mutator we
         // will not perform the cast on those attributes to avoid any confusion.
         foreach ($this->getCasts() as $key => $value) {
-            if (! array_key_exists($key, $attributes)) {
+            if (!array_key_exists($key, $attributes)) {
                 continue;
             }
 
@@ -520,6 +907,16 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
     protected function getArrayableAttributes()
     {
         return $this->getArrayableItems($this->attributes);
+    }
+
+    protected function getArrayableItems(array $values)
+    {
+        return $values;
+    }
+
+    protected function serializeDate(DateTime $date)
+    {
+        return $date->format($this->getDateFormat());
     }
 
     public function relationsToArray()
@@ -571,434 +968,10 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         return $this->getArrayableItems($this->relations);
     }
 
-    protected function getArrayableItems(array $values)
-    {
-        return $values;
-    }
-
-    public function getAttribute($key)
-    {
-        if (array_key_exists($key, $this->attributes)) {
-            return $this->getAttributeValue($key);
-        }
-
-        return $this->getRelationValue($key);
-    }
-
-    public function getAttributeValue($key)
-    {
-        $value = $this->getAttributeFromArray($key);
-
-        // If the attribute exists within the cast array, we will convert it to
-        // an appropriate native PHP type dependant upon the associated value
-        // given with the key in the pair. Dayle made this comment line up.
-        if ($this->hasCast($key)) {
-            $value = $this->castAttribute($key, $value);
-        }
-
-        // If the attribute is listed as a date, we will convert it to a DateTime
-        // instance on retrieval, which makes it quite convenient to work with
-        // date fields without having to create a mutator for each property.
-        elseif (in_array($key, $this->getDates())) {
-            if (! is_null($value)) {
-                return $this->asDateTime($value);
-            }
-        }
-
-        return $value;
-    }
-
-    public function getRelationValue($key)
-    {
-        // If the key already exists in the relationships array, it just means the
-        // relationship has already been loaded, so we'll just return it out of
-        // here because there is no need to query within the relations twice.
-        if ($this->relationLoaded($key)) {
-            return $this->relations[$key];
-        }
-
-        // If the "attribute" exists as a method on the model, we will just assume
-        // it is a relationship and will load and return results from the query
-        // and hydrate the relationship's value on the "relationships" array.
-        if (method_exists($this, $key)) {
-            return $this->getRelationshipFromMethod($key);
-        }
-
-        return null;
-    }
-
-    protected function getAttributeFromArray($key)
-    {
-        if (array_key_exists($key, $this->attributes)) {
-            return $this->attributes[$key];
-        }
-
-        return null;
-    }
-
-    protected function getRelationshipFromMethod($method)
-    {
-        $relations = $this->$method();
-
-        return $this->relations[$method] = $relations->getResults();
-    }
-
-    public function hasCast($key, $types = null)
-    {
-        if (array_key_exists($key, $this->getCasts())) {
-            return $types ? in_array($this->getCastType($key), (array) $types, true) : true;
-        }
-
-        return false;
-    }
-
-    public function getCasts()
-    {
-        if ($this->incrementing) {
-            return array_merge([
-                $this->getKeyName() => 'int',
-            ], $this->casts);
-        }
-
-        return $this->casts;
-    }
-
-    protected function isDateCastable($key)
-    {
-        return $this->hasCast($key, ['date', 'datetime']);
-    }
-
-    protected function isJsonCastable($key)
-    {
-        return $this->hasCast($key, ['array', 'json', 'object', 'collection']);
-    }
-
-    protected function getCastType($key)
-    {
-        return trim(strtolower($this->getCasts()[$key]));
-    }
-
-    protected function castAttribute($key, $value)
-    {
-        if (is_null($value)) {
-            return $value;
-        }
-
-        switch ($this->getCastType($key)) {
-            case 'int':
-            case 'integer':
-                return (int) $value;
-            case 'real':
-            case 'float':
-            case 'double':
-                return (float) $value;
-            case 'string':
-                return (string) $value;
-            case 'bool':
-            case 'boolean':
-                return (bool) $value;
-            case 'object':
-                return $this->fromJson($value, true);
-            case 'array':
-            case 'json':
-                return $this->fromJson($value);
-            case 'collection':
-                return new BaseCollection($this->fromJson($value));
-            case 'date':
-            case 'datetime':
-                return $this->asDateTime($value);
-            case 'timestamp':
-                return $this->asTimeStamp($value);
-            default:
-                return $value;
-        }
-    }
-
-    public function setAttribute($key, $value)
-    {
-        // If an attribute is listed as a "date", we'll convert it from a DateTime
-        // instance into a form proper for storage on the database tables using
-        // the connection grammar's date format. We will auto set the values.
-        if ($value && (in_array($key, $this->getDates()) || $this->isDateCastable($key))) {
-            $value = $this->fromDateTime($value);
-        }
-
-        if ($this->isJsonCastable($key) && ! is_null($value)) {
-            $value = $this->asJson($value);
-        }
-
-        $this->attributes[$key] = $value;
-
-        return $this;
-    }
-
-    public function getDates()
-    {
-        return $this->dates ?: [];
-    }
-
-    public function fromDateTime($value)
-    {
-        $format = $this->getDateFormat();
-
-        $value = $this->asDateTime($value);
-
-        return $value->format($format);
-    }
-
-    /**
-     * Return a timestamp as DateTime object.
-     *
-     * @param  mixed  $value
-     * @return \Carbon\Carbon
-     */
-    protected function asDateTime($value)
-    {
-        // If this value is already a Carbon instance, we shall just return it as is.
-        // This prevents us having to reinstantiate a Carbon instance when we know
-        // it already is one, which wouldn't be fulfilled by the DateTime check.
-        if ($value instanceof Carbon) {
-            return $value;
-        }
-
-        // If the value is already a DateTime instance, we will just skip the rest of
-        // these checks since they will be a waste of time, and hinder performance
-        // when checking the field. We will just return the DateTime right away.
-        if ($value instanceof DateTime) {
-            return Carbon::instance($value);
-        }
-
-        // If this value is an integer, we will assume it is a UNIX timestamp's value
-        // and format a Carbon object from this timestamp. This allows flexibility
-        // when defining your date fields as they might be UNIX timestamps here.
-        if (is_numeric($value)) {
-            return Carbon::createFromTimestamp($value);
-        }
-
-        // If the value is in simply year, month, day format, we will instantiate the
-        // Carbon instances from that format. Again, this provides for simple date
-        // fields on the database, while still supporting Carbonized conversion.
-        if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $value)) {
-            return Carbon::createFromFormat('Y-m-d', $value)->startOfDay();
-        }
-
-        // Finally, we will just assume this date is in the format used by default on
-        // the database connection and use that format to create the Carbon object
-        // that is returned back out to the developers after we convert it here.
-        return Carbon::createFromFormat($this->getDateFormat(), $value);
-    }
-
-    protected function asTimeStamp($value)
-    {
-        return (int) $this->asDateTime($value)->timestamp;
-    }
-
-    protected function serializeDate(DateTime $date)
-    {
-        return $date->format($this->getDateFormat());
-    }
-
-    protected function getDateFormat()
-    {
-        return $this->dateFormat ?: 'c';
-    }
-
-    public function setDateFormat($format)
-    {
-        $this->dateFormat = $format;
-
-        return $this;
-    }
-
-    protected function asJson($value)
-    {
-        return json_encode($value);
-    }
-
-    public function fromJson($value, $asObject = false)
-    {
-        return json_decode($value, ! $asObject);
-    }
-
-    public function getAttributes()
-    {
-        return $this->attributes;
-    }
-
-    public function setRawAttributes(array $attributes, $sync = false)
-    {
-        $this->attributes = $attributes;
-
-        if ($sync) {
-            $this->syncOriginal();
-        }
-
-        return $this;
-    }
-
-    public function getOriginal($key = null, $default = null)
-    {
-        return Arr::get($this->original, $key, $default);
-    }
-
-    public function syncOriginal()
-    {
-        $this->original = $this->attributes;
-
-        return $this;
-    }
-
-    public function syncOriginalAttribute($attribute)
-    {
-        $this->original[$attribute] = $this->attributes[$attribute];
-
-        return $this;
-    }
-
-    public function isDirty($attributes = null)
-    {
-        $dirty = $this->getDirty();
-
-        if (is_null($attributes)) {
-            return count($dirty) > 0;
-        }
-
-        if (! is_array($attributes)) {
-            $attributes = func_get_args();
-        }
-
-        foreach ($attributes as $attribute) {
-            if (array_key_exists($attribute, $dirty)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    public function getDirty()
-    {
-        $dirty = [];
-
-        foreach ($this->attributes as $key => $value) {
-            if (! array_key_exists($key, $this->original)) {
-                $dirty[$key] = $value;
-            } elseif ($value !== $this->original[$key] &&
-                ! $this->originalIsNumericallyEquivalent($key)) {
-                $dirty[$key] = $value;
-            }
-        }
-
-        return $dirty;
-    }
-
-    protected function originalIsNumericallyEquivalent($key)
-    {
-        $current = $this->attributes[$key];
-
-        $original = $this->original[$key];
-
-        return is_numeric($current) && is_numeric($original) && strcmp((string) $current, (string) $original) === 0;
-    }
-
-    public function getRelations()
-    {
-        return $this->relations;
-    }
-
-    public function getRelation($relation)
-    {
-        return $this->relations[$relation];
-    }
-
-    public function relationLoaded($key)
-    {
-        return array_key_exists($key, $this->relations);
-    }
-
-    public function setRelation($relation, $value)
-    {
-        $this->relations[$relation] = $value;
-
-        return $this;
-    }
-
-    public function setRelations(array $relations)
-    {
-        $this->relations = $relations;
-
-        return $this;
-    }
-
-    public function getConnectionName()
-    {
-        return $this->connection;
-    }
-
-    public function setConnection($name)
-    {
-        $this->connection = $name;
-
-        return $this;
-    }
-
-    public function __get($key)
-    {
-        return $this->getAttribute($key);
-    }
-
-    public function __set($key, $value)
-    {
-        $this->setAttribute($key, $value);
-    }
-
-    public function offsetExists($offset)
-    {
-        return isset($this->$offset);
-    }
-
-    public function offsetGet($offset)
-    {
-        return $this->$offset;
-    }
-
-    public function offsetSet($offset, $value)
-    {
-        $this->$offset = $value;
-    }
-
-    public function offsetUnset($offset)
-    {
-        unset($this->$offset);
-    }
-
-    public function __isset($key)
-    {
-        return (isset($this->attributes[$key]) || isset($this->relations[$key])) ||
-        (! is_null($this->getAttributeValue($key)));
-    }
-
-    public function __unset($key)
-    {
-        unset($this->attributes[$key], $this->relations[$key]);
-    }
-
-    public function __toString()
-    {
-        return $this->toJson();
-    }
-
     public function __call($method, $parameters)
     {
         $client = $this->newDescriptor();
 
         return call_user_func_array([$client, $method], $parameters);
-    }
-
-    public static function __callStatic($method, $parameters)
-    {
-        $instance = new static;
-
-        return call_user_func_array([$instance, $method], $parameters);
     }
 }

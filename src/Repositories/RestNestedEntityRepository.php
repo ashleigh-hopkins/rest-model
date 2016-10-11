@@ -29,6 +29,23 @@ abstract class RestNestedEntityRepository extends RestEntityRepository
     }
 
     /**
+     * @param int|object|array|Model $mixed
+     * @return Model
+     */
+    protected function getParentModel($mixed)
+    {
+        if ($mixed instanceof Model == false) {
+            if (is_numeric($mixed) == false) {
+                $mixed = data_get($mixed, 'id');
+            }
+
+            return $this->parentModel->newInstance(['id' => $mixed], true);
+        }
+
+        return $mixed;
+    }
+
+    /**
      * @param array $input
      * @param object|Model $parent
      * @return object|Model
@@ -37,8 +54,7 @@ abstract class RestNestedEntityRepository extends RestEntityRepository
     {
         $parent = $this->getParentModel($parent);
 
-        if($this->isVersionTracking($this->model))
-        {
+        if ($this->isVersionTracking($this->model)) {
             $input += ['version' => 0];
         }
 
@@ -54,8 +70,7 @@ abstract class RestNestedEntityRepository extends RestEntityRepository
     {
         $parent = $this->getParentModel($parent);
 
-        if($object instanceof Model == false)
-        {
+        if ($object instanceof Model == false) {
             $object = $this->getForParent($object, $parent);
         }
 
@@ -118,30 +133,10 @@ abstract class RestNestedEntityRepository extends RestEntityRepository
     {
         $parent = $this->getParentModel($parent);
 
-        if($object instanceof Model == false)
-        {
+        if ($object instanceof Model == false) {
             $object = $this->getForParent($object, $parent);
         }
 
         return parent::update($object, $input);
-    }
-
-    /**
-     * @param int|object|array|Model $mixed
-     * @return Model
-     */
-    protected function getParentModel($mixed)
-    {
-        if ($mixed instanceof Model == false)
-        {
-            if(is_numeric($mixed) == false)
-            {
-                $mixed = data_get($mixed, 'id');
-            }
-
-            return $this->parentModel->newInstance(['id' => $mixed], true);
-        }
-
-        return $mixed;
     }
 }

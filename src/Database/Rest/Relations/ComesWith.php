@@ -13,10 +13,8 @@ class ComesWith extends ComesWithMany
      */
     public function match(array $models, \Illuminate\Database\Eloquent\Collection $results, $relation)
     {
-        foreach($models as $model)
-        {
-            if (isset($model->{$this->accessor}) && $items = $model->{$this->accessor})
-            {
+        foreach ($models as $model) {
+            if (isset($model->{$this->accessor}) && $items = $model->{$this->accessor}) {
                 unset($model->{$this->accessor});
 
                 $model->syncOriginal();

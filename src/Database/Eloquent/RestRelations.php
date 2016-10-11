@@ -1,12 +1,12 @@
 <?php namespace RestModel\Database\Eloquent;
 
+use Illuminate\Support\Str;
+use RestModel\Database\Rest\Model as RestModel;
 use RestModel\Database\Rest\Relations\BelongsTo;
 use RestModel\Database\Rest\Relations\BelongsToMany;
 use RestModel\Database\Rest\Relations\ComesWith;
 use RestModel\Database\Rest\Relations\ComesWithMany;
 use RestModel\Database\Rest\Relations\HasMany;
-use RestModel\Database\Rest\Model as RestModel;
-use Illuminate\Support\Str;
 
 trait RestRelations
 {
@@ -14,8 +14,7 @@ trait RestRelations
     {
         $instance = new $related;
 
-        if($instance instanceof RestModel)
-        {
+        if ($instance instanceof RestModel) {
             // If no relation name was given, we will use this debug backtrace to extract
             // the calling method's name and use that as the relationship name as most
             // of the time this will be what we desire to use for the relationships.
@@ -29,7 +28,7 @@ trait RestRelations
             // foreign key name by using the name of the relationship function, which
             // when combined with an "_id" should conventionally match the columns.
             if (is_null($foreignKey)) {
-                $foreignKey = Str::snake($relation).'_id';
+                $foreignKey = Str::snake($relation) . '_id';
             }
 
             // Once we have the foreign key names, we'll just create a new Eloquent query
@@ -62,7 +61,7 @@ trait RestRelations
         // foreign key name by using the name of the relationship function, which
         // when combined with an "_id" should conventionally match the columns.
         if (is_null($foreignKey)) {
-            $foreignKey = Str::snake($relation).'_id';
+            $foreignKey = Str::snake($relation) . '_id';
         }
 
         // Once we have the foreign key names, we'll just create a new Eloquent query
@@ -79,8 +78,7 @@ trait RestRelations
     {
         $instance = new $related;
 
-        if($instance instanceof RestModel)
-        {
+        if ($instance instanceof RestModel) {
             $foreignKey = $foreignKey ?: $this->getForeignKey();
 
             $localKey = $localKey ?: $this->getKeyName();

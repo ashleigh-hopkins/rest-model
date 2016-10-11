@@ -43,12 +43,10 @@ class BelongsToMany extends Relation
     {
         $ids = [];
 
-        foreach ($models as $model)
-        {
+        foreach ($models as $model) {
             $attribute = $model->getAttribute($this->foreignKey);
 
-            if($attribute !== null)
-            {
+            if ($attribute !== null) {
                 $ids[] = $attribute;
             }
         }

@@ -1,34 +1,34 @@
 <?php namespace RestModel\Database\Rest\Descriptors\Contracts;
 
 use GuzzleHttp\Promise\PromiseInterface;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use RestModel\Database\Rest\Collection;
 use RestModel\Database\Rest\Model;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 interface Descriptor
 {
     function deleteOne($id);
-    
+
     function deleteOneAsync($id);
 
     function getOne($id);
-    
+
     function getOneAsync($id);
 
     function getMany();
-    
+
     function getManyAsync();
 
     function getManyOne($ids);
-    
+
     function getManyOneAsync($ids);
 
     function storeOne($attributes);
-    
+
     function storeOneAsync($attributes);
 
     function updateOne($id, $attributes);
-    
+
     function updateOneAsync($id, $attributes);
 
     /**

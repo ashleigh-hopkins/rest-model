@@ -32,6 +32,23 @@ abstract class RestPivotEntityRepository extends RestEntityRepository
     }
 
     /**
+     * @param int|object|array|Model $mixed
+     * @return Model
+     */
+    protected function getParentModel($mixed)
+    {
+        if ($mixed instanceof Model == false) {
+            if (is_numeric($mixed) == false) {
+                $mixed = data_get($mixed, 'id');
+            }
+
+            return $this->parentModel->newInstance(['id' => $mixed], true);
+        }
+
+        return $mixed;
+    }
+
+    /**
      * @param object|Model $parent
      * @param int|object|Model $object
      * @return Model
@@ -40,8 +57,7 @@ abstract class RestPivotEntityRepository extends RestEntityRepository
     {
         $parent = $this->getParentModel($parent);
 
-        if($object instanceof Model == false)
-        {
+        if ($object instanceof Model == false) {
             $object = $this->getForParent($object, $parent);
         }
 
@@ -127,12 +143,11 @@ abstract class RestPivotEntityRepository extends RestEntityRepository
         $relation = $parent->{$this->relation}();
 
         $pivot = $this->model->where([
-                $relation->getForeignKey() => $parent->id,
-                $relation->getOtherKey() => $object,
-            ])->first();
+            $relation->getForeignKey() => $parent->id,
+            $relation->getOtherKey() => $object,
+        ])->first();
 
-        if($pivot === null)
-        {
+        if ($pivot === null) {
             $relation->attach($object, $input + ['version' => 0]);
 
             return $this->model->where([
@@ -143,30 +158,10 @@ abstract class RestPivotEntityRepository extends RestEntityRepository
 
         $pivot->fill($input);
 
-        if($pivot->isDirty())
-        {
+        if ($pivot->isDirty()) {
             $relation->updateExistingPivot($object, $input);
         }
 
         return $pivot;
-    }
-
-    /**
-     * @param int|object|array|Model $mixed
-     * @return Model
-     */
-    protected function getParentModel($mixed)
-    {
-        if ($mixed instanceof Model == false)
-        {
-            if(is_numeric($mixed) == false)
-            {
-                $mixed = data_get($mixed, 'id');
-            }
-
-            return $this->parentModel->newInstance(['id' => $mixed], true);
-        }
-
-        return $mixed;
     }
 }

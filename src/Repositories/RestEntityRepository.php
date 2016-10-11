@@ -39,8 +39,7 @@ abstract class RestEntityRepository
      */
     public function delete($object)
     {
-        if($object instanceof Model == false)
-        {
+        if ($object instanceof Model == false) {
             $object = $this->get($object);
         }
 
@@ -89,8 +88,7 @@ abstract class RestEntityRepository
      */
     public function update($object, $input)
     {
-        if($object instanceof Model == false)
-        {
+        if ($object instanceof Model == false) {
             $object = $this->get($object);
         }
 

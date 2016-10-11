@@ -1,40 +1,37 @@
 <?php namespace RestModel\Database\Rest\Relations;
 
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Arr;
 use RestModel\Database\Rest\Client;
 use RestModel\Database\Rest\Descriptors\Contracts\Descriptor;
 use RestModel\Database\Rest\Model;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Arr;
 
 abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
 {
-    /**
-     * The Eloquent query builder instance.
-     *
-     * @var Client
-     */
-    protected $descriptor;
-
-    /**
-     * The parent model instance.
-     *
-     * @var Model
-     */
-    protected $parent;
-
-    /**
-     * The related model instance.
-     *
-     * @var Model
-     */
-    protected $related;
-
     /**
      * Indicates if the relation is adding constraints.
      *
      * @var bool
      */
     protected static $constraints = false;
+    /**
+     * The Eloquent query builder instance.
+     *
+     * @var Client
+     */
+    protected $descriptor;
+    /**
+     * The parent model instance.
+     *
+     * @var Model
+     */
+    protected $parent;
+    /**
+     * The related model instance.
+     *
+     * @var Model
+     */
+    protected $related;
 
     /**
      * Create a new relation instance.
@@ -47,6 +44,43 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
         $this->descriptor = $descriptor;
         $this->parent = $parent;
         $this->related = $descriptor->getModel();
+    }
+
+    /**
+     * Set or get the morph map for polymorphic relations.
+     *
+     * @param  array|null $map
+     * @param  bool $merge
+     * @return array
+     */
+    public static function morphMap(array $map = null, $merge = true)
+    {
+        $map = static::buildMorphMapFromModels($map);
+
+        if (is_array($map)) {
+            static::$morphMap = $merge ? array_merge(static::$morphMap, $map) : $map;
+        }
+
+        return static::$morphMap;
+    }
+
+    /**
+     * Builds a table-keyed array from model class names.
+     *
+     * @param  string[]|null $models
+     * @return array|null
+     */
+    protected static function buildMorphMapFromModels(array $models = null)
+    {
+        if (is_null($models) || Arr::isAssoc($models)) {
+            return $models;
+        }
+
+        $tables = array_map(function($model) {
+            return (new $model)->getEndpoint();
+        }, $models);
+
+        return array_combine($tables, $models);
     }
 
     /**
@@ -72,7 +106,7 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
     /**
      * Run a raw update against the base query.
      *
-     * @param  array  $attributes
+     * @param  array $attributes
      * @return int
      */
     public function rawUpdate(array $attributes = [])
@@ -95,8 +129,8 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
     /**
      * Add the constraints for a relationship query.
      *
-     * @param  \Illuminate\Database\Eloquent\Builder  $query
-     * @param  \Illuminate\Database\Eloquent\Builder  $parent
+     * @param  \Illuminate\Database\Eloquent\Builder $query
+     * @param  \Illuminate\Database\Eloquent\Builder $parent
      * @param  array|mixed $columns
      * @return \Illuminate\Database\Eloquent\Builder
      */
@@ -107,6 +141,27 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
         $key = $this->wrap($this->getQualifiedParentKeyName());
 
         return $query->where($this->getHasCompareKey(), '=', new Expression($key));
+    }
+
+    /**
+     * Wrap the given value with the parent query's grammar.
+     *
+     * @param  string $value
+     * @return string
+     */
+    public function wrap($value)
+    {
+        return $value;
+    }
+
+    /**
+     * Get the fully qualified parent key name.
+     *
+     * @return string
+     */
+    public function getQualifiedParentKeyName()
+    {
+        return $this->parent->getKeyName();
     }
 
     /**
@@ -150,16 +205,6 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
     }
 
     /**
-     * Get the fully qualified parent key name.
-     *
-     * @return string
-     */
-    public function getQualifiedParentKeyName()
-    {
-        return $this->parent->getKeyName();
-    }
-
-    /**
      * Get the related model of the relation.
      *
      * @return \Illuminate\Database\Eloquent\Model
@@ -200,58 +245,10 @@ abstract class Relation extends \Illuminate\Database\Eloquent\Relations\Relation
     }
 
     /**
-     * Wrap the given value with the parent query's grammar.
-     *
-     * @param  string  $value
-     * @return string
-     */
-    public function wrap($value)
-    {
-        return $value;
-    }
-
-    /**
-     * Set or get the morph map for polymorphic relations.
-     *
-     * @param  array|null  $map
-     * @param  bool  $merge
-     * @return array
-     */
-    public static function morphMap(array $map = null, $merge = true)
-    {
-        $map = static::buildMorphMapFromModels($map);
-
-        if (is_array($map)) {
-            static::$morphMap = $merge ? array_merge(static::$morphMap, $map) : $map;
-        }
-
-        return static::$morphMap;
-    }
-
-    /**
-     * Builds a table-keyed array from model class names.
-     *
-     * @param  string[]|null  $models
-     * @return array|null
-     */
-    protected static function buildMorphMapFromModels(array $models = null)
-    {
-        if (is_null($models) || Arr::isAssoc($models)) {
-            return $models;
-        }
-
-        $tables = array_map(function ($model) {
-            return (new $model)->getEndpoint();
-        }, $models);
-
-        return array_combine($tables, $models);
-    }
-
-    /**
      * Handle dynamic method calls to the relationship.
      *
-     * @param  string  $method
-     * @param  array   $parameters
+     * @param  string $method
+     * @param  array $parameters
      * @return mixed
      */
     public function __call($method, $parameters)

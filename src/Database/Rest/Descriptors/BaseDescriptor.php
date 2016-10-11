@@ -1,5 +1,10 @@
 <?php namespace RestModel\Database\Rest\Descriptors;
 
+use GuzzleHttp\Client as GuzzleClient;
+use GuzzleHttp\Promise\PromiseInterface;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Str;
+use Psr\Http\Message\ResponseInterface;
 use RestModel\Database\Rest\Client;
 use RestModel\Database\Rest\Collection;
 use RestModel\Database\Rest\Descriptors\Contracts\Descriptor;
@@ -7,13 +12,7 @@ use RestModel\Database\Rest\Exceptions\RestRemoteValidationException;
 use RestModel\Database\Rest\Model;
 use RestModel\Database\Rest\Relations\ComesWithMany;
 use RestModel\Database\Rest\Relations\Relation;
-use GuzzleHttp\Client as GuzzleClient;
-use GuzzleHttp\Promise\PromiseInterface;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
-use Illuminate\Support\Str;
-use Psr\Http\Message\ResponseInterface;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
 
 abstract class BaseDescriptor implements Descriptor
 {
@@ -38,6 +37,7 @@ abstract class BaseDescriptor implements Descriptor
 
     /**
      * BaseDescriptor constructor.
+     *
      * @param string $connection
      * @param Model $model
      * @param array $config
@@ -59,19 +59,22 @@ abstract class BaseDescriptor implements Descriptor
     {
         $endpoint = $this->getOneEndpoint($id);
 
-        return $this->clientCallAsync('delete', $endpoint, [], function($response)
-        {
+        return $this->clientCallAsync('delete', $endpoint, [], function($response) {
             return $this->processDeleteOneResponse($response);
         });
     }
 
+    protected function getOneEndpoint($id)
+    {
+        return "{$this->endpoint}/{$id}";
+    }
+
     protected function clientCallAsync($method, $endpoint, $options = [], $successCallback = null, $failureCallback = null)
     {
-        return $this->newClient()->clientCallAsync($method, $endpoint, $options, $successCallback, $failureCallback ?: function($exception)
-        {
+        return $this->newClient()->clientCallAsync($method, $endpoint, $options, $successCallback, $failureCallback ?: function($exception) {
             $response = $exception->getResponse();
 
-            if($response !== null) {
+            if ($response !== null) {
                 switch ($response->getStatusCode()) {
                     case Response::HTTP_UNPROCESSABLE_ENTITY: {
                         throw new RestRemoteValidationException(json_decode($response->getBody()->getContents())->error, $response->getStatusCode());
@@ -83,6 +86,42 @@ abstract class BaseDescriptor implements Descriptor
         });
     }
 
+    /**
+     * @return Client
+     * @throws \Exception
+     */
+    protected function newClient()
+    {
+        if (isset(static::$cachedClients[$this->connection]) == false) {
+            $config = $this->getClientConfig();
+
+            if ($config !== null) {
+                return (new Client(static::$cachedClients[$this->connection] = new GuzzleClient($config), '', []))->query($this->getQuery());
+            }
+
+            throw new \Exception("Missing config for rest connection [{$this->connection}]");
+        }
+
+        return (new Client(static::$cachedClients[$this->connection], '', []))->query($this->getQuery())->header($this->headers);
+    }
+
+    protected function getClientConfig()
+    {
+        return array_get($this->config, 'client');
+    }
+
+    protected function getQuery()
+    {
+        return $this->query;
+    }
+
+    protected function processDeleteOneResponse(ResponseInterface $response)
+    {
+        // if caching then check and save
+
+        return in_array($response->getStatusCode(), [Response::HTTP_OK, Response::HTTP_NO_CONTENT]);
+    }
+
     public function getOne($id)
     {
         return $this->getOneAsync($id)->wait();
@@ -91,8 +130,7 @@ abstract class BaseDescriptor implements Descriptor
     public function getOneAsync($id)
     {
         return $this->getOneRawAsync($id)
-            ->then(function($result)
-            {
+            ->then(function($result) {
                 return $this->returnOne($result);
             });
     }
@@ -101,10 +139,36 @@ abstract class BaseDescriptor implements Descriptor
     {
         $endpoint = $this->getOneEndpoint($id);
 
-        return $this->clientCallAsync('get', $endpoint, [], function($response)
-        {
+        return $this->clientCallAsync('get', $endpoint, [], function($response) {
             return $this->processOneResponse($response);
         });
+    }
+
+    protected function processOneResponse(ResponseInterface $response)
+    {
+        // if caching then check and save
+
+        $body = $this->getJsonFromResponse($response);
+
+        return $this->getOneResponseAccessor($body);
+    }
+
+    protected function getJsonFromResponse(ResponseInterface $response)
+    {
+        $body = $response->getBody()->getContents();
+
+        return json_decode($body);
+    }
+
+    abstract protected function getOneResponseAccessor($body);
+
+    function returnOne($data)
+    {
+        if ($data instanceof Model == false) {
+            return $this->model->hydrate([$data], $this->connection)->first();
+        }
+
+        return $data;
     }
 
     public function storeOne($attributes)
@@ -116,14 +180,23 @@ abstract class BaseDescriptor implements Descriptor
     {
         $endpoint = $this->getManyEndpoint();
 
-        return $this->clientCallAsync('post', $endpoint, ['json' => $attributes], function($response)
-        {
+        return $this->clientCallAsync('post', $endpoint, ['json' => $attributes], function($response) {
             $result = $this->processOneResponse($response);
 
             $result = $this->postProcessStoreOne($result);
 
             return $this->returnOne($result);
         });
+    }
+
+    protected function getManyEndpoint()
+    {
+        return $this->endpoint;
+    }
+
+    protected function postProcessStoreOne($data)
+    {
+        return $data;
     }
 
     public function updateOne($id, $attributes)
@@ -135,14 +208,18 @@ abstract class BaseDescriptor implements Descriptor
     {
         $endpoint = $this->getOneEndpoint($id);
 
-        return $this->clientCallAsync(array_get($this->config, 'update_verb', 'put'), $endpoint, ['json' => $attributes], function($response)
-        {
+        return $this->clientCallAsync(array_get($this->config, 'update_verb', 'put'), $endpoint, ['json' => $attributes], function($response) {
             $result = $this->processOneResponse($response);
-            
+
             $result = $this->postProcessUpdateOne($result);
 
             return $this->returnOne($result);
         });
+    }
+
+    protected function postProcessUpdateOne($data)
+    {
+        return $data;
     }
 
     function getMany()
@@ -156,18 +233,15 @@ abstract class BaseDescriptor implements Descriptor
 
         $keyName = $this->model->getKeyName();
 
-        if(count($this->query) == 1 && isset($this->query[$keyName]))
-        {
+        if (count($this->query) == 1 && isset($this->query[$keyName])) {
             $id = $this->query[$keyName];
 
             unset($this->query[$keyName]);
 
-            if(is_array($id) == false || count($id) == 1)
-            {
+            if (is_array($id) == false || count($id) == 1) {
                 $id = (array)$id;
 
-                return $this->getOneRawAsync($id[0])->then(function($result)
-                {
+                return $this->getOneRawAsync($id[0])->then(function($result) {
                     return $this->returnMany([$result]);
                 });
             }
@@ -175,23 +249,25 @@ abstract class BaseDescriptor implements Descriptor
             return $this->getManyOneAsync($id);
         }
 
-        return $this->clientCallAsync('get', $this->getManyEndpoint(), [], function($response)
-        {
+        return $this->clientCallAsync('get', $this->getManyEndpoint(), [], function($response) {
             return $this->processManyResponse($response);
         });
     }
 
-    function getManyOne($ids)
+    function returnMany($data)
     {
-        return $this->getManyOneAsync($ids)->wait();
+        if ($data instanceof Collection == false) {
+            return $this->model->hydrate($data, $this->connection)->all();
+        }
+
+        return $data;
     }
 
     function getManyOneAsync($ids)
     {
         $tasks = [];
 
-        foreach ($ids as $id)
-        {
+        foreach ($ids as $id) {
             $endpoint = $this->getOneEndpoint($id);
 
             $tasks[] = $this->clientCallAsync('get', $endpoint);
@@ -202,37 +278,62 @@ abstract class BaseDescriptor implements Descriptor
         return \GuzzleHttp\Promise\promise_for($this->processManyOneResponse($items));
     }
 
-    public function where($key, $operator = null, $value = null)
+    /**
+     * @param PromiseInterface[] $tasks
+     * @return ResponseInterface[]
+     */
+    protected function waitForManyPromises($tasks)
     {
-        // If the column is an array, we will assume it is an array of key-value pairs
-        // and can add them each as a where clause. We will maintain the boolean we
-        // received when the method was called and pass it into the nested where.
-        if (is_array($key)) {
-            foreach($key as $k) {
-                call_user_func_array([$this, 'where'], $k);
+        $items = [];
+
+        foreach ($tasks as $task) {
+            $item = $task->wait();
+
+            if ($item !== null) {
+                $items[] = $item;
             }
         }
 
-        // Here we will make some assumptions about the operator. If only 2 values are
-        // passed to the method, we will assume that the operator is an equals sign
-        // and keep going. Otherwise, we'll require the operator to be passed in.
-        if (func_num_args() == 2) {
-            list($value, $operator) = [$operator, '='];
-        }
-
-        if($operator == null)
-        {
-            return $this;
-        }
-
-        return $this->addWhere($key, $operator, $value);
+        return $items;
     }
 
-    protected function addWhere($key, $operator, $value)
+    /**
+     * @param ResponseInterface[] $responses
+     * @return Collection|Model[]
+     */
+    protected function processManyOneResponse($responses)
     {
-        $this->query[$key] = $value;
+        $items = [];
 
-        return $this;
+        foreach ($responses as $response) {
+            // if caching then check and save
+
+            $body = $this->getJsonFromResponse($response);
+
+            $data = $this->getOneResponseAccessor($body);
+
+            $items[] = $data;
+        }
+
+        return $this->returnMany($items);
+    }
+
+    protected function processManyResponse(ResponseInterface $response)
+    {
+        // if caching then check and save
+
+        $body = $this->getJsonFromResponse($response);
+
+        $data = $this->getManyResponseAccessor($body);
+
+        return $this->returnMany($data);
+    }
+
+    abstract protected function getManyResponseAccessor($body);
+
+    function getManyOne($ids)
+    {
+        return $this->getManyOneAsync($ids)->wait();
     }
 
     public function whereIn($key, $value)
@@ -244,21 +345,14 @@ abstract class BaseDescriptor implements Descriptor
 
     public function header($key, $value = null)
     {
-        if(is_array($key) == false)
-        {
+        if (is_array($key) == false) {
             $key = [$key => $value];
         }
 
-        foreach($key as $k => $v)
-        {
+        foreach ($key as $k => $v) {
             $this->headers[$k] = $v;
         }
 
-        return $this;
-    }
-
-    public function take($limit)
-    {
         return $this;
     }
 
@@ -274,8 +368,7 @@ abstract class BaseDescriptor implements Descriptor
     {
         $this->loadPreRelations();
 
-        return $this->getManyAsync()->then(function($models)
-        {
+        return $this->getManyAsync()->then(function($models) {
             if (count($models) > 0) {
                 $models = $this->eagerLoadRelations($models);
             }
@@ -284,24 +377,37 @@ abstract class BaseDescriptor implements Descriptor
         });
     }
 
-    public function eagerLoadRelations(array $models)
-    {
-        foreach ($this->eagerLoad as $name) {
-            // For nested eager loads we'll skip loading them here and they will be set as an
-            // eager load on the query to retrieve the relation so that they will be eager
-            // loaded on that query, because that is where they get hydrated as models.
-            if (strpos($name, '.') === false) {
-                $models = $this->loadRelation($models, $name);
-            }
-        }
-
-        return $models;
-    }
-
     public function loadPreRelations()
     {
         foreach ($this->eagerLoad as $name) {
             $this->loadPreRelation($name);
+        }
+    }
+
+    protected function loadPreRelation($name)
+    {
+        if (strstr($name, '.')) {
+            $name = explode('.', $name);
+
+            $obj = $this;
+
+            foreach ($name as $n) {
+                $relation = $obj->getRelation($n);
+
+                if ($relation instanceof ComesWithMany) {
+                    $relation->addPreConstraints($this);
+
+                    $obj = $relation->getRelated()->newDescriptor();
+                } else {
+                    break;
+                }
+            }
+        } else {
+            $relation = $this->getRelation($name);
+
+            if ($relation instanceof ComesWithMany) {
+                $relation->addPreConstraints($this);
+            }
         }
     }
 
@@ -328,11 +434,9 @@ abstract class BaseDescriptor implements Descriptor
         return $relation;
     }
 
-    protected function isNested($name, $relation)
+    public function getModel()
     {
-        $dots = Str::contains($name, '.');
-
-        return $dots && Str::startsWith($name, $relation.'.');
+        return $this->model;
     }
 
     protected function nestedRelations($relation)
@@ -344,11 +448,32 @@ abstract class BaseDescriptor implements Descriptor
         // that start with the given top relations and adds them to our arrays.
         foreach ($this->eagerLoad as $name) {
             if ($this->isNested($name, $relation)) {
-                $nested[] = substr($name, strlen($relation.'.'));
+                $nested[] = substr($name, strlen($relation . '.'));
             }
         }
 
         return $nested;
+    }
+
+    protected function isNested($name, $relation)
+    {
+        $dots = Str::contains($name, '.');
+
+        return $dots && Str::startsWith($name, $relation . '.');
+    }
+
+    public function eagerLoadRelations(array $models)
+    {
+        foreach ($this->eagerLoad as $name) {
+            // For nested eager loads we'll skip loading them here and they will be set as an
+            // eager load on the query to retrieve the relation so that they will be eager
+            // loaded on that query, because that is where they get hydrated as models.
+            if (strpos($name, '.') === false) {
+                $models = $this->loadRelation($models, $name);
+            }
+        }
+
+        return $models;
     }
 
     protected function loadRelation(array $models, $name)
@@ -370,77 +495,17 @@ abstract class BaseDescriptor implements Descriptor
         return $relation->match($models, $results, $name);
     }
 
-    protected function loadPreRelation($name)
-    {
-        if(strstr($name, '.'))
-        {
-            $name = explode('.', $name);
-
-            $obj = $this;
-
-            foreach($name as $n)
-            {
-                $relation = $obj->getRelation($n);
-
-                if ($relation instanceof ComesWithMany)
-                {
-                    $relation->addPreConstraints($this);
-
-                    $obj = $relation->getRelated()->newDescriptor();
-                }
-                else
-                {
-                    break;
-                }
-            }
-        }
-        else
-        {
-            $relation = $this->getRelation($name);
-
-            if ($relation instanceof ComesWithMany)
-            {
-                $relation->addPreConstraints($this);
-            }
-        }
-    }
-
-    function returnOne($data)
-    {
-        if($data instanceof Model == false)
-        {
-            return $this->model->hydrate([$data], $this->connection)->first();
-        }
-
-        return $data;
-    }
-
-    function returnMany($data)
-    {
-        if($data instanceof Collection == false)
-        {
-            return $this->model->hydrate($data, $this->connection)->all();
-        }
-
-        return $data;
-    }
-
     public function with($relations)
     {
         $relations = is_array($relations) ? $relations : func_get_args();
 
-        if($relations)
-        {
+        if ($relations) {
             $nonClosureRelations = [];
 
-            foreach ($relations as $k => $relation)
-            {
-                if ($relation instanceof \Closure)
-                {
+            foreach ($relations as $k => $relation) {
+                if ($relation instanceof \Closure) {
                     $nonClosureRelations[] = $k;
-                }
-                else
-                {
+                } else {
                     $nonClosureRelations[] = $relation;
                 }
             }
@@ -467,6 +532,38 @@ abstract class BaseDescriptor implements Descriptor
         return $this->where($this->model->getKeyName(), $id)->firstAsync();
     }
 
+    public function where($key, $operator = null, $value = null)
+    {
+        // If the column is an array, we will assume it is an array of key-value pairs
+        // and can add them each as a where clause. We will maintain the boolean we
+        // received when the method was called and pass it into the nested where.
+        if (is_array($key)) {
+            foreach ($key as $k) {
+                call_user_func_array([$this, 'where'], $k);
+            }
+        }
+
+        // Here we will make some assumptions about the operator. If only 2 values are
+        // passed to the method, we will assume that the operator is an equals sign
+        // and keep going. Otherwise, we'll require the operator to be passed in.
+        if (func_num_args() == 2) {
+            list($value, $operator) = [$operator, '='];
+        }
+
+        if ($operator == null) {
+            return $this;
+        }
+
+        return $this->addWhere($key, $operator, $value);
+    }
+
+    protected function addWhere($key, $operator, $value)
+    {
+        $this->query[$key] = $value;
+
+        return $this;
+    }
+
     /**
      * @param $id
      * @return static
@@ -482,10 +579,8 @@ abstract class BaseDescriptor implements Descriptor
      */
     public function findOrFailAsync($id)
     {
-        return $this->findAsync($id)->then(function($model)
-        {
-            if($model)
-            {
+        return $this->findAsync($id)->then(function($model) {
+            if ($model) {
                 return $model;
             }
 
@@ -503,10 +598,14 @@ abstract class BaseDescriptor implements Descriptor
      */
     public function firstAsync()
     {
-        return $this->take(1)->getAsync()->then(function($result)
-        {
+        return $this->take(1)->getAsync()->then(function($result) {
             return $result->first();
         });
+    }
+
+    public function take($limit)
+    {
+        return $this;
     }
 
     public function firstOrFail()
@@ -519,20 +618,13 @@ abstract class BaseDescriptor implements Descriptor
      */
     public function firstOrFailAsync()
     {
-        return $this->firstAsync()->then(function($model)
-        {
-            if($model)
-            {
+        return $this->firstAsync()->then(function($model) {
+            if ($model) {
                 return $model;
             }
 
             throw (new ModelNotFoundException())->setModel(get_class($this->model));
         });
-    }
-
-    public function getModel()
-    {
-        return $this->model;
     }
 
     public function getEndpoint()
@@ -545,137 +637,5 @@ abstract class BaseDescriptor implements Descriptor
         $this->endpoint = $value;
 
         return $this;
-    }
-
-    protected function getQuery()
-    {
-        return $this->query;
-    }
-
-    /**
-     * @return Client
-     * @throws \Exception
-     */
-    protected function newClient()
-    {
-        if(isset(static::$cachedClients[$this->connection]) == false)
-        {
-            $config = $this->getClientConfig();
-
-            if($config !== null)
-            {
-                return (new Client(static::$cachedClients[$this->connection] = new GuzzleClient($config), '', []))->query($this->getQuery());
-            }
-
-            throw new \Exception("Missing config for rest connection [{$this->connection}]");
-        }
-
-        return (new Client(static::$cachedClients[$this->connection], '', []))->query($this->getQuery())->header($this->headers);
-    }
-
-    protected function getClientConfig()
-    {
-        return array_get($this->config, 'client');
-    }
-
-    protected function getOneEndpoint($id)
-    {
-        return "{$this->endpoint}/{$id}";
-    }
-
-    protected function getManyEndpoint()
-    {
-        return $this->endpoint;
-    }
-
-    protected function processOneResponse(ResponseInterface $response)
-    {
-        // if caching then check and save
-
-        $body = $this->getJsonFromResponse($response);
-
-        return $this->getOneResponseAccessor($body);
-    }
-    
-    protected function postProcessStoreOne($data)
-    {
-        return $data;
-    }
-    
-    protected function postProcessUpdateOne($data)
-    {
-        return $data;
-    }
-
-    protected function processDeleteOneResponse(ResponseInterface $response)
-    {
-        // if caching then check and save
-
-        return in_array($response->getStatusCode(), [Response::HTTP_OK, Response::HTTP_NO_CONTENT]);
-    }
-
-    protected function processManyResponse(ResponseInterface $response)
-    {
-        // if caching then check and save
-
-        $body = $this->getJsonFromResponse($response);
-
-        $data = $this->getManyResponseAccessor($body);
-
-        return $this->returnMany($data);
-    }
-
-    /**
-     * @param ResponseInterface[] $responses
-     * @return Collection|Model[]
-     */
-    protected function processManyOneResponse($responses)
-    {
-        $items = [];
-
-        foreach($responses as $response)
-        {
-            // if caching then check and save
-
-            $body = $this->getJsonFromResponse($response);
-
-            $data = $this->getOneResponseAccessor($body);
-
-            $items[] = $data;
-        }
-
-        return $this->returnMany($items);
-    }
-
-    abstract protected function getOneResponseAccessor($body);
-
-    abstract protected function getManyResponseAccessor($body);
-
-    protected function getJsonFromResponse(ResponseInterface $response)
-    {
-        $body = $response->getBody()->getContents();
-
-        return json_decode($body);
-    }
-
-    /**
-     * @param PromiseInterface[] $tasks
-     * @return ResponseInterface[]
-     */
-    protected function waitForManyPromises($tasks)
-    {
-        $items = [];
-
-        foreach ($tasks as $task)
-        {
-            $item = $task->wait();
-
-            if ($item !== null)
-            {
-                $items[] = $item;
-            }
-        }
-
-        return $items;
     }
 }
