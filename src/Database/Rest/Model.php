@@ -275,7 +275,9 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         $config = config("rest.connections.{$this->connection}");
 
         if ($config !== null) {
-            return app(array_get($config, 'descriptor'), [$this->connection, $this, $config]);
+            $class = array_get($config, 'descriptor');
+
+            return new $class($this->connection, $this, $config);
         }
 
         throw new Exception("Missing config for rest connection [{$this->connection}]");

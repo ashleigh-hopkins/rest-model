@@ -64,7 +64,7 @@ abstract class RestPivotEntityRepository extends RestEntityRepository
         $relation = $parent->{$this->relation}();
 
         // get the "other key"
-        $e = explode('.', $relation->getOtherKey());
+        $e = explode('.', $relation->getRelatedKey());
         $key = end($e);
 
         $relation->detach($object->{$key});
@@ -84,7 +84,7 @@ abstract class RestPivotEntityRepository extends RestEntityRepository
         $relation = $parent->{$this->relation}();
         $relationRaw = $parent->{$this->relationRaw}();
 
-        return $relationRaw->where([$relation->getOtherKey() => $id])->firstOrFail();
+        return $relationRaw->where([$relation->getRelatedKey() => $id])->firstOrFail();
     }
 
     /**
@@ -144,7 +144,7 @@ abstract class RestPivotEntityRepository extends RestEntityRepository
 
         $pivot = $this->model->where([
             $relation->getForeignKey() => $parent->id,
-            $relation->getOtherKey() => $object,
+            $relation->getRelatedKey() => $object,
         ])->first();
 
         if ($pivot === null) {
@@ -152,7 +152,7 @@ abstract class RestPivotEntityRepository extends RestEntityRepository
 
             return $this->model->where([
                 $relation->getForeignKey() => $parent->id,
-                $relation->getOtherKey() => $object,
+                $relation->getRelatedKey() => $object,
             ])->first();
         }
 
