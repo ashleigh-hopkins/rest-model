@@ -9,6 +9,8 @@ class Client
 
     protected static $requestReference = 0;
 
+    protected static $logging = false;
+
     protected $connection;
 
     protected $query = [];
@@ -27,6 +29,11 @@ class Client
     public function __construct(\GuzzleHttp\Client $connection)
     {
         $this->connection = $connection;
+    }
+
+    public static function logging($bool = true)
+    {
+        static::$logging = $bool;
     }
 
     public static function getRequestLog()
@@ -111,6 +118,10 @@ class Client
      */
     protected function startLog($ref, $endpoint, $verb, $method, $body = null)
     {
+        if(static::$logging == false) {
+            return;
+        }
+
         static::$log[$ref] = array_filter([
             'method' => $verb,
             'url' => $this->connection->getConfig('base_uri') . "$endpoint",
@@ -143,6 +154,10 @@ class Client
      */
     protected function endLog($ref, $response = null)
     {
+        if(static::$logging == false) {
+            return;
+        }
+
         static::$log[$ref]['time'] = round((microtime(true) - static::$log[$ref]['time']) * 1000, 2);
         static::$log[$ref]['status'] = $response ? $response->getStatusCode() : -1;
     }

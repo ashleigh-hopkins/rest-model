@@ -16,8 +16,6 @@ use Symfony\Component\HttpFoundation\Response;
 
 abstract class BaseDescriptor implements Descriptor
 {
-    protected static $cachedClients = [];
-
     protected $config;
 
     protected $connection;
@@ -92,17 +90,13 @@ abstract class BaseDescriptor implements Descriptor
      */
     protected function newClient()
     {
-        if (isset(static::$cachedClients[$this->connection]) == false) {
-            $config = $this->getClientConfig();
+        $config = $this->getClientConfig();
 
-            if ($config !== null) {
-                return (new Client(static::$cachedClients[$this->connection] = new GuzzleClient($config), '', []))->query($this->getQuery());
-            }
-
+        if ($config === null) {
             throw new \Exception("Missing config for rest connection [{$this->connection}]");
         }
 
-        return (new Client(static::$cachedClients[$this->connection], '', []))->query($this->getQuery())->header($this->headers);
+        return (new Client(new GuzzleClient($config), '', []))->query($this->getQuery())->header($this->headers);
     }
 
     protected function getClientConfig()
